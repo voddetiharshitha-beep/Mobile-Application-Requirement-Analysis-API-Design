@@ -1,0 +1,61 @@
+from django.urls import path
+
+from .views import (
+    BookingCancelView,
+    BookingDetailView,
+    BookingListCreateView,
+    BookingStatusUpdateView,
+    PaymentInitiateView,
+    PaymentProcessView,
+    ServiceDetailView,
+    ServiceListCreateView,
+    PaymentWebhookView,
+)
+
+urlpatterns = [
+    path(
+        "",
+        ServiceListCreateView.as_view(),
+        name="service-list-create",
+    ),
+    path(
+        "<uuid:pk>/",
+        ServiceDetailView.as_view(),
+        name="service-detail",
+    ),
+    path(
+        "bookings/",
+        BookingListCreateView.as_view(),
+        name="booking-list-create",
+    ),
+    path(
+        "bookings/<uuid:pk>/",
+        BookingDetailView.as_view(),
+        name="booking-detail",
+    ),
+    path(
+        "bookings/<uuid:pk>/cancel/",
+        BookingCancelView.as_view(),
+        name="booking-cancel",
+    ),
+    path(
+    "bookings/<uuid:pk>/status/",
+    BookingStatusUpdateView.as_view(),
+    name="booking-status-update",
+),
+    path(
+        "payments/initiate/",
+        PaymentInitiateView.as_view(),
+        name="payment-initiate",
+    ),
+    path(
+        "payments/<uuid:pk>/process/",
+        PaymentProcessView.as_view(),
+        name="payment-process",
+    ),
+    path(
+    "payments/webhook/",
+    PaymentWebhookView.as_view(),
+    name="payment-webhook",
+),
+]
