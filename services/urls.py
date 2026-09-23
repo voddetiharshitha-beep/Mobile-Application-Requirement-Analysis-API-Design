@@ -7,9 +7,9 @@ from .views import (
     BookingStatusUpdateView,
     PaymentInitiateView,
     PaymentProcessView,
+    PaymentWebhookView,
     ServiceDetailView,
     ServiceListCreateView,
-    PaymentWebhookView,
 )
 
 urlpatterns = [
@@ -39,10 +39,10 @@ urlpatterns = [
         name="booking-cancel",
     ),
     path(
-    "bookings/<uuid:pk>/status/",
-    BookingStatusUpdateView.as_view(),
-    name="booking-status-update",
-),
+        "bookings/<uuid:pk>/status/",
+        BookingStatusUpdateView.as_view(),
+        name="booking-status-update",
+    ),
     path(
         "payments/initiate/",
         PaymentInitiateView.as_view(),
@@ -54,8 +54,8 @@ urlpatterns = [
         name="payment-process",
     ),
     path(
-    "payments/webhook/",
-    PaymentWebhookView.as_view(),
-    name="payment-webhook",
-),
+        "payments/webhook/",
+        PaymentWebhookView.as_view(),
+        name="payment-webhook",
+    ),
 ]

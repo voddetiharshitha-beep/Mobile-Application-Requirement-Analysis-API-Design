@@ -1,10 +1,71 @@
-
 from datetime import datetime
-
+from PIL import Image, UnidentifiedImageError
+from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from .models import Booking, Payment, Service
+from .models import Booking, Payment, Service, UserProfile
 
+User = get_user_model()
+
+
+class RegisterSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(
+        write_only=True,
+        min_length=8,
+    )
+
+    password_confirm = serializers.CharField(
+        write_only=True,
+    )
+
+    class Meta:
+        model = User
+        fields = [
+            "username",
+            "email",
+            "password",
+            "password_confirm",
+        ]
+
+    def validate_username(self, value):
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError(
+                "A user with this username already exists."
+            )
+
+        return value
+
+    def validate_email(self, value):
+        if value and User.objects.filter(email=value).exists():
+            raise serializers.ValidationError(
+                "A user with this email already exists."
+            )
+
+        return value
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs["password_confirm"]:
+            raise serializers.ValidationError(
+                {
+                    "password_confirm": (
+                        "Passwords do not match."
+                    )
+                }
+            )
+
+        return attrs
+
+    def create(self, validated_data):
+        validated_data.pop("password_confirm")
+
+        password = validated_data.pop("password")
+
+        user = User.objects.create_user(
+            password=password,
+            **validated_data,
+        )
+
+        return user
 
 class ServiceSerializer(serializers.ModelSerializer):
     class Meta:
@@ -277,4 +338,49 @@ class BookingStatusSerializer(serializers.Serializer):
                 f"{booking.status} → {value}."
             )
 
-        return value 
+        return value
+
+class ProfileImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserProfile
+        fields = ["image"]
+
+    def validate_image(self, image):
+        allowed_types = ["image/jpeg", "image/png"]
+
+        if image.content_type not in allowed_types:
+            raise serializers.ValidationError(
+                "Only JPG, JPEG, and PNG images are allowed."
+            )
+
+        max_size = 5 * 1024 * 1024
+
+        if image.size > max_size:
+            raise serializers.ValidationError(
+                "Image size must not exceed 5 MB."
+            )
+
+        if not image.name:
+            raise serializers.ValidationError(
+                "Filename is required."
+            )
+
+        allowed_extensions = [".jpg", ".jpeg", ".png"]
+        filename = image.name.lower()
+
+        if not any(filename.endswith(ext) for ext in allowed_extensions):
+            raise serializers.ValidationError(
+                "Filename must end with .jpg, .jpeg, or .png."
+            )
+
+        try:
+            image_file = Image.open(image)
+            image_file.verify()
+        except (UnidentifiedImageError, OSError, SyntaxError):
+            raise serializers.ValidationError(
+                "Invalid image file."
+            )
+        finally:
+            image.seek(0)
+
+        return image

@@ -5,6 +5,9 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
 )
 
+from services.views import ProfileImageUploadView, RegisterView
+
+
 urlpatterns = [
     path(
         "admin/",
@@ -17,6 +20,16 @@ urlpatterns = [
     path(
         "api/v1/",
         include("services.booking_urls"),
+    ),
+    path(
+        "api/v1/profile/image/",
+        ProfileImageUploadView.as_view(),
+        name="profile-image-upload",
+    ),
+    path(
+        "api/v1/register/",
+        RegisterView.as_view(),
+        name="register",
     ),
     path(
         "api/v1/token/",
