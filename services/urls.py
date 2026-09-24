@@ -5,11 +5,14 @@ from .views import (
     BookingDetailView,
     BookingListCreateView,
     BookingStatusUpdateView,
+    NotificationListView,
     PaymentInitiateView,
     PaymentProcessView,
     PaymentWebhookView,
     ServiceDetailView,
     ServiceListCreateView,
+    ServiceImageListCreateView,
+    ServiceImageDeleteView,
 )
 
 urlpatterns = [
@@ -37,6 +40,21 @@ urlpatterns = [
         "bookings/<uuid:pk>/cancel/",
         BookingCancelView.as_view(),
         name="booking-cancel",
+    ),
+    path(
+        "notifications/",
+        NotificationListView.as_view(),
+        name="notification-list",
+    ),
+    path(
+        "<uuid:service_id>/images/",
+        ServiceImageListCreateView.as_view(),
+        name="service-image-list-create",
+    ),
+    path(
+        "<uuid:service_id>/images/<int:image_id>/",
+        ServiceImageDeleteView.as_view(),
+        name="service-image-delete",
     ),
     path(
         "bookings/<uuid:pk>/status/",

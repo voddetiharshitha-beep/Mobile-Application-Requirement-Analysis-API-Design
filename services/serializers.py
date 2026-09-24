@@ -1,9 +1,18 @@
+
 from datetime import datetime
+
 from PIL import Image, UnidentifiedImageError
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from .models import Booking, Payment, Service, UserProfile
+from .models import (
+    Booking,
+    Payment,
+    Service,
+    ServiceImage,
+    UserProfile,
+    Notification,
+)
 
 User = get_user_model()
 
@@ -66,6 +75,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         )
 
         return user
+
 
 class ServiceSerializer(serializers.ModelSerializer):
     class Meta:
@@ -213,8 +223,6 @@ class PaymentInitiateSerializer(serializers.ModelSerializer):
         amount = attrs["amount"]
         request = self.context["request"]
 
-        # 1. Validate that the booking belongs
-        #    to the authenticated user.
         if booking.customer != request.user:
             raise serializers.ValidationError(
                 {
@@ -225,7 +233,6 @@ class PaymentInitiateSerializer(serializers.ModelSerializer):
                 }
             )
 
-        # 2. Validate that the booking is payable.
         if booking.status != "pending":
             raise serializers.ValidationError(
                 {
@@ -235,8 +242,6 @@ class PaymentInitiateSerializer(serializers.ModelSerializer):
                 }
             )
 
-        # 3. Validate that the amount matches
-        #    the booking amount.
         if amount != booking.amount:
             raise serializers.ValidationError(
                 {
@@ -247,7 +252,6 @@ class PaymentInitiateSerializer(serializers.ModelSerializer):
                 }
             )
 
-        # 4. Prevent duplicate payment initiation.
         if Payment.objects.filter(
             booking=booking
         ).exists():
@@ -261,15 +265,21 @@ class PaymentInitiateSerializer(serializers.ModelSerializer):
             )
 
         return attrs
+
+
 class PaymentProcessSerializer(serializers.Serializer):
     result = serializers.ChoiceField(
         choices=["SUCCESS", "FAILED"]
     )
+
+
 class PaymentWebhookSerializer(serializers.Serializer):
     payment_id = serializers.UUIDField()
+
     transaction_id = serializers.CharField(
         max_length=100,
     )
+
     payment_status = serializers.ChoiceField(
         choices=["SUCCESS", "FAILED"],
     )
@@ -315,8 +325,9 @@ class PaymentWebhookSerializer(serializers.Serializer):
 
         attrs["payment"] = payment
 
-        return attrs   
-    
+        return attrs
+
+
 class BookingStatusSerializer(serializers.Serializer):
     status = serializers.ChoiceField(
         choices=[
@@ -340,13 +351,17 @@ class BookingStatusSerializer(serializers.Serializer):
 
         return value
 
+
 class ProfileImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProfile
         fields = ["image"]
 
     def validate_image(self, image):
-        allowed_types = ["image/jpeg", "image/png"]
+        allowed_types = [
+            "image/jpeg",
+            "image/png",
+        ]
 
         if image.content_type not in allowed_types:
             raise serializers.ValidationError(
@@ -365,10 +380,18 @@ class ProfileImageSerializer(serializers.ModelSerializer):
                 "Filename is required."
             )
 
-        allowed_extensions = [".jpg", ".jpeg", ".png"]
+        allowed_extensions = [
+            ".jpg",
+            ".jpeg",
+            ".png",
+        ]
+
         filename = image.name.lower()
 
-        if not any(filename.endswith(ext) for ext in allowed_extensions):
+        if not any(
+            filename.endswith(ext)
+            for ext in allowed_extensions
+        ):
             raise serializers.ValidationError(
                 "Filename must end with .jpg, .jpeg, or .png."
             )
@@ -376,7 +399,11 @@ class ProfileImageSerializer(serializers.ModelSerializer):
         try:
             image_file = Image.open(image)
             image_file.verify()
-        except (UnidentifiedImageError, OSError, SyntaxError):
+        except (
+            UnidentifiedImageError,
+            OSError,
+            SyntaxError,
+        ):
             raise serializers.ValidationError(
                 "Invalid image file."
             )
@@ -384,3 +411,29 @@ class ProfileImageSerializer(serializers.ModelSerializer):
             image.seek(0)
 
         return image
+
+
+class ServiceImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ServiceImage
+        fields = [
+            "id",
+            "service",
+            "image",
+            "uploaded_at",
+        ]
+        read_only_fields = [
+            "id",
+            "service",
+            "uploaded_at",
+        ]
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = [
+            "id",
+            "booking",
+            "notification_type",
+            "message",
+        ]

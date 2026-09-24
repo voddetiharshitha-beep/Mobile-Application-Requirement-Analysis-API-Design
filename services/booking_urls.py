@@ -4,6 +4,7 @@ from .views import (
     BookingCancelView,
     BookingDetailView,
     BookingListCreateView,
+    BookingStatusUpdateView,
 )
 
 urlpatterns = [
@@ -21,5 +22,10 @@ urlpatterns = [
         "bookings/<uuid:pk>/cancel/",
         BookingCancelView.as_view(),
         name="booking-cancel",
+    ),
+    path(
+        "bookings/<uuid:pk>/status/",
+        BookingStatusUpdateView.as_view(),
+        name="booking-status-update",
     ),
 ]

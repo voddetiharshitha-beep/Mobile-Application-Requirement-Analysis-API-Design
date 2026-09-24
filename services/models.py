@@ -26,6 +26,13 @@ class Provider(models.Model):
         default=uuid.uuid4,
         editable=False,
     )
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="provider",
+        null=True,
+        blank=True,
+    )
     name = models.CharField(max_length=150)
     description = models.TextField(blank=True)
     status = models.BooleanField(default=True)
@@ -92,44 +99,14 @@ class Service(models.Model):
 
 class Booking(models.Model):
     STATUS_CHOICES = [
-    ("pending", "Pending"),
-    ("confirmed", "Confirmed"),
-    ("in_progress", "In Progress"),
-    ("completed", "Completed"),
-    ("cancelled", "Cancelled"),
-    ("payment_failed", "Payment Failed"),
-]
-    
-     # your existing fields...
+        ("pending", "Pending"),
+        ("confirmed", "Confirmed"),
+        ("in_progress", "In Progress"),
+        ("completed", "Completed"),
+        ("cancelled", "Cancelled"),
+        ("payment_failed", "Payment Failed"),
+    ]
 
-    status = models.CharField(
-        max_length=20,
-        choices=STATUS_CHOICES,
-        default="pending",
-    )
-
-    # your existing created_at / updated_at fields...
-
-    def can_transition_to(self, new_status):
-        allowed_transitions = {
-            "pending": {
-                "confirmed",
-                "cancelled",
-                "payment_failed",
-            },
-            "confirmed": {
-                "in_progress",
-            },
-            "in_progress": {
-                "completed",
-            },
-            "completed": set(),
-            "cancelled": set(),
-            "payment_failed": set(),
-        }
-
-        return new_status in allowed_transitions.get(self.status, set())
-    
     id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,
@@ -170,6 +147,29 @@ class Booking(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def can_transition_to(self, new_status):
+        allowed_transitions = {
+            "pending": {
+                "confirmed",
+                "cancelled",
+                "payment_failed",
+            },
+            "confirmed": {
+                "in_progress",
+            },
+            "in_progress": {
+                "completed",
+            },
+            "completed": set(),
+            "cancelled": set(),
+            "payment_failed": set(),
+        }
+
+        return new_status in allowed_transitions.get(
+            self.status,
+            set(),
+        )
 
     def __str__(self):
         return f"{self.service.name} - {self.customer.username}"
@@ -225,7 +225,8 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"{self.transaction_id} - {self.payment_status}"
-    
+
+
 class Notification(models.Model):
     NOTIFICATION_TYPE_CHOICES = [
         ("BOOKING_CREATED", "Booking Created"),
@@ -270,6 +271,7 @@ class Notification(models.Model):
     def __str__(self):
         return f"{self.notification_type} - {self.recipient.username}"
 
+
 class UserProfile(models.Model):
     user = models.OneToOneField(
         User,
@@ -286,3 +288,16 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.username} Profile"
+
+
+class ServiceImage(models.Model):
+    service = models.ForeignKey(
+        Service,
+        on_delete=models.CASCADE,
+        related_name="images",
+    )
+    image = models.ImageField(upload_to="service_images/")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Image for {self.service.name}"

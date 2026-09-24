@@ -129,6 +129,17 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+
+
+
+
+
+
+
+
+
+
+
 REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
@@ -140,8 +151,11 @@ REST_FRAMEWORK = {
         "rest_framework.pagination.PageNumberPagination"
     ),
     "PAGE_SIZE": 10,
+    "EXCEPTION_HANDLER": "services.exceptions.custom_exception_handler",
 }
+
 PAYMENT_WEBHOOK_SECRET = "mock-webhook-secret"
+
 
 
 CHANNEL_LAYERS = {

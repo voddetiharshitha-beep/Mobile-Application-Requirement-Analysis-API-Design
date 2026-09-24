@@ -5,23 +5,50 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 from django.db import transaction
 from rest_framework import generics, status
-from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from .models import Booking, Payment, Service, UserProfile
+from .models import (
+    Booking,
+    Notification,
+    Payment,
+    Service,
+    ServiceImage,
+    UserProfile,
+)
 from .pagination import ServicePagination
 from .serializers import (
     BookingSerializer,
     BookingStatusSerializer,
+    NotificationSerializer,
     PaymentInitiateSerializer,
     PaymentProcessSerializer,
     PaymentWebhookSerializer,
     ProfileImageSerializer,
     RegisterSerializer,
+    ServiceImageSerializer,
     ServiceSerializer,
 )
 from .tasks import create_notification
+
+
+def api_error(
+    message,
+    error_code,
+    status_code,
+    data=None,
+):
+    return Response(
+        {
+            "success": False,
+            "message": message,
+            "error_code": error_code,
+            "data": data,
+        },
+        status=status_code,
+    )
 
 
 class RegisterView(generics.CreateAPIView):
@@ -86,6 +113,7 @@ class ServiceListCreateView(generics.ListCreateAPIView):
         if ordering in [
             "price",
             "-price",
+            "created_at",
             "-created_at",
         ]:
             queryset = queryset.order_by(ordering)
@@ -102,6 +130,7 @@ class ServiceDetailView(generics.RetrieveUpdateDestroyAPIView):
 class BookingListCreateView(generics.ListCreateAPIView):
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = ServicePagination
 
     def get_queryset(self):
         return Booking.objects.select_related(
@@ -142,23 +171,17 @@ class BookingDetailView(generics.RetrieveUpdateAPIView):
         booking = self.get_object()
 
         if booking.status == "cancelled":
-            return Response(
-                {
-                    "detail": (
-                        "Cancelled booking cannot be modified."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return api_error(
+                "Cancelled booking cannot be modified.",
+                "BOOKING_ALREADY_CANCELLED",
+                status.HTTP_400_BAD_REQUEST,
             )
 
         if booking.status == "completed":
-            return Response(
-                {
-                    "detail": (
-                        "Completed booking cannot be modified."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return api_error(
+                "Completed booking cannot be modified.",
+                "BOOKING_COMPLETED",
+                status.HTTP_400_BAD_REQUEST,
             )
 
         return super().update(
@@ -181,21 +204,17 @@ class BookingCancelView(generics.GenericAPIView):
         booking = self.get_object()
 
         if booking.status == "cancelled":
-            return Response(
-                {
-                    "detail": "Booking is already cancelled."
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return api_error(
+                "Booking is already cancelled.",
+                "BOOKING_ALREADY_CANCELLED",
+                status.HTTP_400_BAD_REQUEST,
             )
 
         if booking.status == "completed":
-            return Response(
-                {
-                    "detail": (
-                        "Completed booking cannot be cancelled."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return api_error(
+                "Completed booking cannot be cancelled.",
+                "BOOKING_COMPLETED",
+                status.HTTP_400_BAD_REQUEST,
             )
 
         booking.status = "cancelled"
@@ -345,32 +364,24 @@ class PaymentProcessView(generics.GenericAPIView):
                 "booking"
             ).get(id=pk)
         except Payment.DoesNotExist:
-            return Response(
-                {
-                    "detail": "Payment does not exist."
-                },
-                status=status.HTTP_404_NOT_FOUND,
+            return api_error(
+                "Payment does not exist.",
+                "NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
             )
 
         if payment.booking.customer != request.user:
-            return Response(
-                {
-                    "detail": (
-                        "This payment does not belong "
-                        "to the current user."
-                    )
-                },
-                status=status.HTTP_403_FORBIDDEN,
+            return api_error(
+                "This payment does not belong to the current user.",
+                "PERMISSION_DENIED",
+                status.HTTP_403_FORBIDDEN,
             )
 
         if payment.payment_status != "PENDING":
-            return Response(
-                {
-                    "detail": (
-                        "Only pending payments can be processed."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return api_error(
+                "Only pending payments can be processed.",
+                "PAYMENT_NOT_PENDING",
+                status.HTTP_400_BAD_REQUEST,
             )
 
         result = serializer.validated_data["result"]
@@ -407,11 +418,10 @@ class PaymentWebhookView(generics.GenericAPIView):
         )
 
         if webhook_secret != settings.PAYMENT_WEBHOOK_SECRET:
-            return Response(
-                {
-                    "detail": "Invalid webhook secret."
-                },
-                status=status.HTTP_401_UNAUTHORIZED,
+            return api_error(
+                "Invalid webhook secret.",
+                "INVALID_WEBHOOK_SECRET",
+                status.HTTP_401_UNAUTHORIZED,
             )
 
         serializer = self.get_serializer(
@@ -467,7 +477,7 @@ class PaymentWebhookView(generics.GenericAPIView):
             },
             status=status.HTTP_200_OK,
         )
-        
+
 
 class ProfileImageUploadView(generics.GenericAPIView):
     serializer_class = ProfileImageSerializer
@@ -476,13 +486,10 @@ class ProfileImageUploadView(generics.GenericAPIView):
 
     def post(self, request, *args, **kwargs):
         if "image" not in request.FILES:
-            return Response(
-                {
-                    "success": False,
-                    "message": "Profile image is required.",
-                    "data": None,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return api_error(
+                "Profile image is required.",
+                "VALIDATION_ERROR",
+                status.HTTP_400_BAD_REQUEST,
             )
 
         profile, created = UserProfile.objects.get_or_create(
@@ -506,4 +513,130 @@ class ProfileImageUploadView(generics.GenericAPIView):
             },
             status=status.HTTP_200_OK,
         )
-           
+
+
+class ServiceImageListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get(self, request, service_id):
+        service = Service.objects.filter(
+            id=service_id
+        ).first()
+
+        if service is None:
+            return api_error(
+                "Service not found.",
+                "NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        images = ServiceImage.objects.filter(
+            service=service
+        ).order_by("-uploaded_at")
+
+        paginator = ServicePagination()
+
+        page = paginator.paginate_queryset(
+            images,
+            request,
+            view=self,
+        )
+
+        serializer = ServiceImageSerializer(
+            page,
+            many=True,
+            context={"request": request},
+        )
+
+        return paginator.get_paginated_response(
+            serializer.data
+        )
+
+    def post(self, request, service_id):
+        service = Service.objects.filter(
+            id=service_id
+        ).first()
+
+        if service is None:
+            return api_error(
+                "Service not found.",
+                "NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        if service.provider.user != request.user:
+            return api_error(
+                "You can only upload images for your own service.",
+                "PERMISSION_DENIED",
+                status.HTTP_403_FORBIDDEN,
+            )
+
+        if "image" not in request.FILES:
+            return api_error(
+                "Image file is required.",
+                "VALIDATION_ERROR",
+                status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ServiceImageSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+
+        serializer.is_valid(raise_exception=True)
+        serializer.save(service=service)
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ServiceImageDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, service_id, image_id):
+        service = Service.objects.filter(
+            id=service_id
+        ).first()
+
+        if service is None:
+            return api_error(
+                "Service not found.",
+                "NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        if service.provider.user != request.user:
+            return api_error(
+                "You can only delete images from your own service.",
+                "PERMISSION_DENIED",
+                status.HTTP_403_FORBIDDEN,
+            )
+
+        image = ServiceImage.objects.filter(
+            id=image_id,
+            service=service,
+        ).first()
+
+        if image is None:
+            return api_error(
+                "Image not found.",
+                "NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        image.delete()
+
+        return Response(
+            status=status.HTTP_204_NO_CONTENT,
+        )
+class NotificationListView(generics.ListAPIView):
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Notification.objects.filter(
+            recipient=self.request.user
+        ).order_by("-id")     
