@@ -69,7 +69,7 @@ class ProviderJourneyTests(TransactionTestCase):
         )
 
         self.client.force_authenticate(
-            user=self.customer
+            user=self.provider_user
         )
 
     def test_booking_can_be_confirmed(self):

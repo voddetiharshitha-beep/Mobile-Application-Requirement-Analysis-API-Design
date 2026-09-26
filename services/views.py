@@ -3,8 +3,10 @@ from uuid import uuid4
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from rest_framework import generics, status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -14,6 +16,7 @@ from .models import (
     Booking,
     Notification,
     Payment,
+    Provider,
     Service,
     ServiceImage,
     UserProfile,
@@ -51,6 +54,16 @@ def api_error(
     )
 
 
+def clear_service_list_cache():
+    """
+    Clear all cached Service List API responses.
+    """
+    try:
+        cache.delete_pattern("service_list:*")
+    except AttributeError:
+        pass
+
+
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
@@ -60,6 +73,31 @@ class ServiceListCreateView(generics.ListCreateAPIView):
     serializer_class = ServiceSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = ServicePagination
+
+    def list(self, request, *args, **kwargs):
+        """
+        Return cached Service List API response when available.
+        """
+        cache_key = f"service_list:{request.get_full_path()}"
+
+        cached_data = cache.get(cache_key)
+
+        if cached_data is not None:
+            return Response(cached_data)
+
+        response = super().list(
+            request,
+            *args,
+            **kwargs,
+        )
+
+        cache.set(
+            cache_key,
+            response.data,
+            60,
+        )
+
+        return response
 
     def get_queryset(self):
         queryset = Service.objects.select_related(
@@ -77,7 +115,9 @@ class ServiceListCreateView(generics.ListCreateAPIView):
         status_filter = self.request.query_params.get("status")
 
         if name:
-            queryset = queryset.filter(name__icontains=name)
+            queryset = queryset.filter(
+                name__icontains=name
+            )
 
         if category:
             queryset = queryset.filter(
@@ -95,20 +135,28 @@ class ServiceListCreateView(generics.ListCreateAPIView):
             )
 
         if price:
-            queryset = queryset.filter(price=price)
+            queryset = queryset.filter(
+                price=price
+            )
 
         if min_price:
-            queryset = queryset.filter(price__gte=min_price)
+            queryset = queryset.filter(
+                price__gte=min_price
+            )
 
         if max_price:
-            queryset = queryset.filter(price__lte=max_price)
+            queryset = queryset.filter(
+                price__lte=max_price
+            )
 
         if status_filter:
             queryset = queryset.filter(
                 status=status_filter.lower() == "true"
             )
 
-        ordering = self.request.query_params.get("ordering")
+        ordering = self.request.query_params.get(
+            "ordering"
+        )
 
         if ordering in [
             "price",
@@ -120,24 +168,100 @@ class ServiceListCreateView(generics.ListCreateAPIView):
 
         return queryset
 
+    def perform_create(self, serializer):
+        try:
+            provider = Provider.objects.get(
+                user=self.request.user
+            )
+        except Provider.DoesNotExist:
+            raise PermissionDenied(
+                "Only registered providers can create services."
+            )
 
-class ServiceDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Service.objects.all()
+        serializer.save(
+            provider=provider
+        )
+
+        clear_service_list_cache()
+
+
+class ServiceDetailView(
+    generics.RetrieveUpdateDestroyAPIView
+):
     serializer_class = ServiceSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        return Service.objects.select_related(
+            "category",
+            "provider",
+        )
 
-class BookingListCreateView(generics.ListCreateAPIView):
+    def update(self, request, *args, **kwargs):
+        service = self.get_object()
+
+        if service.provider.user != request.user:
+            return api_error(
+                "You can only update your own services.",
+                "PERMISSION_DENIED",
+                status.HTTP_403_FORBIDDEN,
+            )
+
+        response = super().update(
+            request,
+            *args,
+            **kwargs,
+        )
+
+        clear_service_list_cache()
+
+        return response
+
+    def destroy(self, request, *args, **kwargs):
+        service = self.get_object()
+
+        if service.provider.user != request.user:
+            return api_error(
+                "You can only delete your own services.",
+                "PERMISSION_DENIED",
+                status.HTTP_403_FORBIDDEN,
+            )
+
+        response = super().destroy(
+            request,
+            *args,
+            **kwargs,
+        )
+
+        clear_service_list_cache()
+
+        return response
+
+
+class BookingListCreateView(
+    generics.ListCreateAPIView
+):
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = ServicePagination
 
     def get_queryset(self):
-        return Booking.objects.select_related(
+        queryset = Booking.objects.select_related(
             "customer",
             "provider",
             "service",
-        ).filter(
+        )
+
+        provider = Provider.objects.filter(
+            user=self.request.user
+        ).first()
+
+        if provider:
+            return queryset.filter(
+                provider=provider
+            ).order_by("-created_at")
+
+        return queryset.filter(
             customer=self.request.user
         ).order_by("-created_at")
 
@@ -154,7 +278,9 @@ class BookingListCreateView(generics.ListCreateAPIView):
         )
 
 
-class BookingDetailView(generics.RetrieveUpdateAPIView):
+class BookingDetailView(
+    generics.RetrieveUpdateAPIView
+):
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
 
@@ -191,7 +317,9 @@ class BookingDetailView(generics.RetrieveUpdateAPIView):
         )
 
 
-class BookingCancelView(generics.GenericAPIView):
+class BookingCancelView(
+    generics.GenericAPIView
+):
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
 
@@ -218,11 +346,28 @@ class BookingCancelView(generics.GenericAPIView):
             )
 
         booking.status = "cancelled"
+
         booking.save(
             update_fields=[
                 "status",
                 "updated_at",
             ]
+        )
+
+        channel_layer = get_channel_layer()
+
+        async_to_sync(
+            channel_layer.group_send
+        )(
+            f"booking_{booking.id}",
+            {
+                "type": "booking_status_update",
+                "booking_id": str(booking.id),
+                "status": booking.status,
+                "message": (
+                    "Booking status changed to cancelled."
+                ),
+            },
         )
 
         create_notification.delay(
@@ -241,13 +386,15 @@ class BookingCancelView(generics.GenericAPIView):
         )
 
 
-class BookingStatusUpdateView(generics.GenericAPIView):
+class BookingStatusUpdateView(
+    generics.GenericAPIView
+):
     serializer_class = BookingStatusSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         return Booking.objects.filter(
-            customer=self.request.user
+            provider__user=self.request.user
         )
 
     def post(self, request, *args, **kwargs):
@@ -255,13 +402,21 @@ class BookingStatusUpdateView(generics.GenericAPIView):
 
         serializer = self.get_serializer(
             data=request.data,
-            context={"booking": booking},
+            context={
+                "booking": booking,
+            },
         )
-        serializer.is_valid(raise_exception=True)
 
-        new_status = serializer.validated_data["status"]
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        new_status = serializer.validated_data[
+            "status"
+        ]
 
         booking.status = new_status
+
         booking.save(
             update_fields=[
                 "status",
@@ -271,7 +426,9 @@ class BookingStatusUpdateView(generics.GenericAPIView):
 
         channel_layer = get_channel_layer()
 
-        async_to_sync(channel_layer.group_send)(
+        async_to_sync(
+            channel_layer.group_send
+        )(
             f"booking_{booking.id}",
             {
                 "type": "booking_status_update",
@@ -312,17 +469,28 @@ class BookingStatusUpdateView(generics.GenericAPIView):
         )
 
 
-class PaymentInitiateView(generics.CreateAPIView):
+class PaymentInitiateView(
+    generics.CreateAPIView
+):
     serializer_class = PaymentInitiateSerializer
     permission_classes = [IsAuthenticated]
 
-    def create(self, request, *args, **kwargs):
+    def create(
+        self,
+        request,
+        *args,
+        **kwargs,
+    ):
         serializer = self.get_serializer(
             data=request.data,
-            context={"request": request},
+            context={
+                "request": request,
+            },
         )
 
-        serializer.is_valid(raise_exception=True)
+        serializer.is_valid(
+            raise_exception=True
+        )
 
         payment = serializer.save(
             transaction_id=(
@@ -339,30 +507,57 @@ class PaymentInitiateView(generics.CreateAPIView):
                 ),
                 "payment": {
                     "id": str(payment.id),
-                    "booking": str(payment.booking.id),
-                    "amount": str(payment.amount),
-                    "transaction_id": payment.transaction_id,
-                    "payment_status": payment.payment_status,
-                    "payment_method": payment.payment_method,
-                    "created_at": payment.created_at,
+                    "booking": str(
+                        payment.booking.id
+                    ),
+                    "amount": str(
+                        payment.amount
+                    ),
+                    "transaction_id": (
+                        payment.transaction_id
+                    ),
+                    "payment_status": (
+                        payment.payment_status
+                    ),
+                    "payment_method": (
+                        payment.payment_method
+                    ),
+                    "created_at": (
+                        payment.created_at
+                    ),
                 },
             },
             status=status.HTTP_201_CREATED,
         )
 
 
-class PaymentProcessView(generics.GenericAPIView):
+class PaymentProcessView(
+    generics.GenericAPIView
+):
     serializer_class = PaymentProcessSerializer
     permission_classes = [IsAuthenticated]
 
-    def post(self, request, pk, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+    def post(
+        self,
+        request,
+        pk,
+        *args,
+        **kwargs,
+    ):
+        serializer = self.get_serializer(
+            data=request.data
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
 
         try:
             payment = Payment.objects.select_related(
                 "booking"
-            ).get(id=pk)
+            ).get(
+                id=pk
+            )
         except Payment.DoesNotExist:
             return api_error(
                 "Payment does not exist.",
@@ -384,40 +579,69 @@ class PaymentProcessView(generics.GenericAPIView):
                 status.HTTP_400_BAD_REQUEST,
             )
 
-        result = serializer.validated_data["result"]
+        result = serializer.validated_data[
+            "result"
+        ]
 
         payment.payment_status = result
+
         payment.save(
-            update_fields=["payment_status"]
+            update_fields=[
+                "payment_status",
+            ]
         )
 
         return Response(
             {
-                "message": "Payment processed successfully.",
+                "message": (
+                    "Payment processed successfully."
+                ),
                 "payment": {
                     "id": str(payment.id),
-                    "booking": str(payment.booking.id),
-                    "amount": str(payment.amount),
-                    "transaction_id": payment.transaction_id,
-                    "payment_status": payment.payment_status,
-                    "payment_method": payment.payment_method,
-                    "created_at": payment.created_at,
+                    "booking": str(
+                        payment.booking.id
+                    ),
+                    "amount": str(
+                        payment.amount
+                    ),
+                    "transaction_id": (
+                        payment.transaction_id
+                    ),
+                    "payment_status": (
+                        payment.payment_status
+                    ),
+                    "payment_method": (
+                        payment.payment_method
+                    ),
+                    "created_at": (
+                        payment.created_at
+                    ),
                 },
             },
             status=status.HTTP_200_OK,
         )
 
 
-class PaymentWebhookView(generics.GenericAPIView):
+class PaymentWebhookView(
+    generics.GenericAPIView
+):
     serializer_class = PaymentWebhookSerializer
     permission_classes = []
 
-    def post(self, request, *args, **kwargs):
+    def post(
+        self,
+        request,
+        *args,
+        **kwargs,
+    ):
         webhook_secret = request.headers.get(
             "X-Webhook-Secret"
         )
 
-        if webhook_secret != settings.PAYMENT_WEBHOOK_SECRET:
+        if (
+            webhook_secret
+            != settings.PAYMENT_WEBHOOK_SECRET
+        ):
             return api_error(
                 "Invalid webhook secret.",
                 "INVALID_WEBHOOK_SECRET",
@@ -427,20 +651,30 @@ class PaymentWebhookView(generics.GenericAPIView):
         serializer = self.get_serializer(
             data=request.data
         )
-        serializer.is_valid(raise_exception=True)
 
-        payment = serializer.validated_data["payment"]
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        payment = serializer.validated_data[
+            "payment"
+        ]
+
         payment_status = serializer.validated_data[
             "payment_status"
         ]
 
         payment.payment_status = payment_status
+
         payment.save(
-            update_fields=["payment_status"]
+            update_fields=[
+                "payment_status",
+            ]
         )
 
         if payment_status == "SUCCESS":
             payment.booking.status = "confirmed"
+
             payment.booking.save(
                 update_fields=[
                     "status",
@@ -448,10 +682,30 @@ class PaymentWebhookView(generics.GenericAPIView):
                 ]
             )
 
+            channel_layer = get_channel_layer()
+
+            async_to_sync(
+                channel_layer.group_send
+            )(
+                f"booking_{payment.booking.id}",
+                {
+                    "type": "booking_status_update",
+                    "booking_id": str(
+                        payment.booking.id
+                    ),
+                    "status": "confirmed",
+                    "message": (
+                        "Booking status changed to confirmed."
+                    ),
+                },
+            )
+
             transaction.on_commit(
                 lambda: create_notification.delay(
                     payment.booking.customer_id,
-                    str(payment.booking.id),
+                    str(
+                        payment.booking.id
+                    ),
                     "PAYMENT_SUCCESSFUL",
                     "Your payment was successful.",
                 )
@@ -460,7 +714,9 @@ class PaymentWebhookView(generics.GenericAPIView):
             transaction.on_commit(
                 lambda: create_notification.delay(
                     payment.booking.customer_id,
-                    str(payment.booking.id),
+                    str(
+                        payment.booking.id
+                    ),
                     "BOOKING_CONFIRMED",
                     "Your booking has been confirmed.",
                 )
@@ -472,19 +728,33 @@ class PaymentWebhookView(generics.GenericAPIView):
                     "Payment confirmation received "
                     "successfully."
                 ),
-                "payment_id": str(payment.id),
-                "payment_status": payment.payment_status,
+                "payment_id": str(
+                    payment.id
+                ),
+                "payment_status": (
+                    payment.payment_status
+                ),
             },
             status=status.HTTP_200_OK,
         )
 
 
-class ProfileImageUploadView(generics.GenericAPIView):
+class ProfileImageUploadView(
+    generics.GenericAPIView
+):
     serializer_class = ProfileImageSerializer
     permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [
+        MultiPartParser,
+        FormParser,
+    ]
 
-    def post(self, request, *args, **kwargs):
+    def post(
+        self,
+        request,
+        *args,
+        **kwargs,
+    ):
         if "image" not in request.FILES:
             return api_error(
                 "Profile image is required.",
@@ -492,8 +762,10 @@ class ProfileImageUploadView(generics.GenericAPIView):
                 status.HTTP_400_BAD_REQUEST,
             )
 
-        profile, created = UserProfile.objects.get_or_create(
-            user=request.user
+        profile, created = (
+            UserProfile.objects.get_or_create(
+                user=request.user
+            )
         )
 
         serializer = self.get_serializer(
@@ -502,13 +774,18 @@ class ProfileImageUploadView(generics.GenericAPIView):
             partial=True,
         )
 
-        serializer.is_valid(raise_exception=True)
+        serializer.is_valid(
+            raise_exception=True
+        )
+
         serializer.save()
 
         return Response(
             {
                 "success": True,
-                "message": "Profile image uploaded successfully.",
+                "message": (
+                    "Profile image uploaded successfully."
+                ),
                 "data": serializer.data,
             },
             status=status.HTTP_200_OK,
@@ -517,9 +794,16 @@ class ProfileImageUploadView(generics.GenericAPIView):
 
 class ServiceImageListCreateView(APIView):
     permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [
+        MultiPartParser,
+        FormParser,
+    ]
 
-    def get(self, request, service_id):
+    def get(
+        self,
+        request,
+        service_id,
+    ):
         service = Service.objects.filter(
             id=service_id
         ).first()
@@ -546,14 +830,20 @@ class ServiceImageListCreateView(APIView):
         serializer = ServiceImageSerializer(
             page,
             many=True,
-            context={"request": request},
+            context={
+                "request": request,
+            },
         )
 
         return paginator.get_paginated_response(
             serializer.data
         )
 
-    def post(self, request, service_id):
+    def post(
+        self,
+        request,
+        service_id,
+    ):
         service = Service.objects.filter(
             id=service_id
         ).first()
@@ -565,7 +855,10 @@ class ServiceImageListCreateView(APIView):
                 status.HTTP_404_NOT_FOUND,
             )
 
-        if service.provider.user != request.user:
+        if (
+            service.provider.user
+            != request.user
+        ):
             return api_error(
                 "You can only upload images for your own service.",
                 "PERMISSION_DENIED",
@@ -581,11 +874,18 @@ class ServiceImageListCreateView(APIView):
 
         serializer = ServiceImageSerializer(
             data=request.data,
-            context={"request": request},
+            context={
+                "request": request,
+            },
         )
 
-        serializer.is_valid(raise_exception=True)
-        serializer.save(service=service)
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        serializer.save(
+            service=service
+        )
 
         return Response(
             serializer.data,
@@ -596,7 +896,12 @@ class ServiceImageListCreateView(APIView):
 class ServiceImageDeleteView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def delete(self, request, service_id, image_id):
+    def delete(
+        self,
+        request,
+        service_id,
+        image_id,
+    ):
         service = Service.objects.filter(
             id=service_id
         ).first()
@@ -608,7 +913,10 @@ class ServiceImageDeleteView(APIView):
                 status.HTTP_404_NOT_FOUND,
             )
 
-        if service.provider.user != request.user:
+        if (
+            service.provider.user
+            != request.user
+        ):
             return api_error(
                 "You can only delete images from your own service.",
                 "PERMISSION_DENIED",
@@ -630,13 +938,17 @@ class ServiceImageDeleteView(APIView):
         image.delete()
 
         return Response(
-            status=status.HTTP_204_NO_CONTENT,
+            status=status.HTTP_204_NO_CONTENT
         )
-class NotificationListView(generics.ListAPIView):
+
+
+class NotificationListView(
+    generics.ListAPIView
+):
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         return Notification.objects.filter(
             recipient=self.request.user
-        ).order_by("-id")     
+        ).order_by("-id")

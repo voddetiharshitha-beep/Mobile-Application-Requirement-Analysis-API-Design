@@ -13,6 +13,14 @@ class BookingStatusConsumer(AsyncJsonWebsocketConsumer):
 
         await self.accept()
 
+        await self.send_json(
+            {
+                "booking_id": str(self.booking_id),
+                "status": "connected",
+                "message": "Real-time booking status connected.",
+            }
+        )
+
     async def disconnect(self, close_code):
         await self.channel_layer.group_discard(
             self.room_group_name,

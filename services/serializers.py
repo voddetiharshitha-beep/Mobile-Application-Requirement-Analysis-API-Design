@@ -37,7 +37,9 @@ class RegisterSerializer(serializers.ModelSerializer):
         ]
 
     def validate_username(self, value):
-        if User.objects.filter(username=value).exists():
+        if User.objects.filter(
+            username=value
+        ).exists():
             raise serializers.ValidationError(
                 "A user with this username already exists."
             )
@@ -45,7 +47,12 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def validate_email(self, value):
-        if value and User.objects.filter(email=value).exists():
+        if (
+            value
+            and User.objects.filter(
+                email=value
+            ).exists()
+        ):
             raise serializers.ValidationError(
                 "A user with this email already exists."
             )
@@ -53,7 +60,10 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        if attrs["password"] != attrs["password_confirm"]:
+        if (
+            attrs["password"]
+            != attrs["password_confirm"]
+        ):
             raise serializers.ValidationError(
                 {
                     "password_confirm": (
@@ -65,9 +75,13 @@ class RegisterSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
-        validated_data.pop("password_confirm")
+        validated_data.pop(
+            "password_confirm"
+        )
 
-        password = validated_data.pop("password")
+        password = validated_data.pop(
+            "password"
+        )
 
         user = User.objects.create_user(
             password=password,
@@ -77,9 +91,12 @@ class RegisterSerializer(serializers.ModelSerializer):
         return user
 
 
-class ServiceSerializer(serializers.ModelSerializer):
+class ServiceSerializer(
+    serializers.ModelSerializer
+):
     class Meta:
         model = Service
+
         fields = [
             "id",
             "name",
@@ -92,20 +109,29 @@ class ServiceSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
         read_only_fields = [
             "id",
+            "provider",
             "created_at",
             "updated_at",
         ]
 
 
-class BookingSerializer(serializers.ModelSerializer):
+class BookingSerializer(
+    serializers.ModelSerializer
+):
     customer = serializers.PrimaryKeyRelatedField(
+        read_only=True,
+    )
+
+    provider = serializers.PrimaryKeyRelatedField(
         read_only=True,
     )
 
     class Meta:
         model = Booking
+
         fields = [
             "id",
             "customer",
@@ -118,9 +144,11 @@ class BookingSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
         read_only_fields = [
             "id",
             "customer",
+            "provider",
             "amount",
             "status",
             "created_at",
@@ -129,23 +157,79 @@ class BookingSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         service = attrs.get("service")
-        provider = attrs.get("provider")
-        booking_date = attrs.get("booking_date")
-        booking_time = attrs.get("booking_time")
 
-        if not Service.objects.filter(
-            id=service.id
-        ).exists():
+        # During partial updates, service may not be
+        # included in the request.
+        if service is None:
+            if self.instance:
+                service = self.instance.service
+            else:
+                raise serializers.ValidationError(
+                    {
+                        "service": (
+                            "Service is required."
+                        )
+                    }
+                )
+
+        try:
+            service = Service.objects.select_related(
+                "provider"
+            ).get(
+                id=service.id
+            )
+        except Service.DoesNotExist:
             raise serializers.ValidationError(
                 {
-                    "service": "Service does not exist."
+                    "service": (
+                        "Service does not exist."
+                    )
                 }
             )
+
+        provider = service.provider
 
         if not provider.status:
             raise serializers.ValidationError(
                 {
-                    "provider": "Provider is not active."
+                    "service": (
+                        "The provider for this service "
+                        "is not active."
+                    )
+                }
+            )
+
+        booking_date = attrs.get(
+            "booking_date"
+        )
+
+        booking_time = attrs.get(
+            "booking_time"
+        )
+
+        if self.instance:
+            if booking_date is None:
+                booking_date = (
+                    self.instance.booking_date
+                )
+
+            if booking_time is None:
+                booking_time = (
+                    self.instance.booking_time
+                )
+
+        if (
+            booking_date is None
+            or booking_time is None
+        ):
+            raise serializers.ValidationError(
+                {
+                    "booking_date": (
+                        "Booking date is required."
+                    ),
+                    "booking_time": (
+                        "Booking time is required."
+                    ),
                 }
             )
 
@@ -154,11 +238,16 @@ class BookingSerializer(serializers.ModelSerializer):
             booking_time,
         )
 
-        if requested_datetime <= datetime.now():
+        if (
+            not self.instance
+            and requested_datetime
+            <= datetime.now()
+        ):
             raise serializers.ValidationError(
                 {
                     "booking_time": (
-                        "Booking date and time must be in the future."
+                        "Booking date and time "
+                        "must be in the future."
                     )
                 }
             )
@@ -172,8 +261,10 @@ class BookingSerializer(serializers.ModelSerializer):
         )
 
         if self.instance:
-            conflicting_booking = conflicting_booking.exclude(
-                id=self.instance.id
+            conflicting_booking = (
+                conflicting_booking.exclude(
+                    id=self.instance.id
+                )
             )
 
         if conflicting_booking.exists():
@@ -191,28 +282,84 @@ class BookingSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         service = validated_data["service"]
 
-        validated_data["customer"] = self.context[
-            "request"
-        ].user
+        validated_data["customer"] = (
+            self.context["request"].user
+        )
 
-        validated_data["amount"] = service.price
+        # Automatically assign the provider
+        # belonging to the selected service.
+        validated_data["provider"] = (
+            service.provider
+        )
 
-        return Booking.objects.create(**validated_data)
+        # Automatically use the service price.
+        validated_data["amount"] = (
+            service.price
+        )
 
-    def update(self, instance, validated_data):
+        return Booking.objects.create(
+            **validated_data
+        )
+
+    def update(
+        self,
+        instance,
+        validated_data,
+    ):
         if instance.status == "cancelled":
             raise serializers.ValidationError(
                 {
-                    "detail": "Cancelled booking cannot be modified."
+                    "detail": (
+                        "Cancelled booking "
+                        "cannot be modified."
+                    )
                 }
             )
 
-        return super().update(instance, validated_data)
+        if instance.status == "completed":
+            raise serializers.ValidationError(
+                {
+                    "detail": (
+                        "Completed booking "
+                        "cannot be modified."
+                    )
+                }
+            )
+
+        # Provider, customer, amount, and status
+        # must never be changed through this serializer.
+        validated_data.pop(
+            "provider",
+            None,
+        )
+
+        validated_data.pop(
+            "customer",
+            None,
+        )
+
+        validated_data.pop(
+            "amount",
+            None,
+        )
+
+        validated_data.pop(
+            "status",
+            None,
+        )
+
+        return super().update(
+            instance,
+            validated_data,
+        )
 
 
-class PaymentInitiateSerializer(serializers.ModelSerializer):
+class PaymentInitiateSerializer(
+    serializers.ModelSerializer
+):
     class Meta:
         model = Payment
+
         fields = [
             "booking",
             "amount",
@@ -267,13 +414,20 @@ class PaymentInitiateSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class PaymentProcessSerializer(serializers.Serializer):
+class PaymentProcessSerializer(
+    serializers.Serializer
+):
     result = serializers.ChoiceField(
-        choices=["SUCCESS", "FAILED"]
+        choices=[
+            "SUCCESS",
+            "FAILED",
+        ]
     )
 
 
-class PaymentWebhookSerializer(serializers.Serializer):
+class PaymentWebhookSerializer(
+    serializers.Serializer
+):
     payment_id = serializers.UUIDField()
 
     transaction_id = serializers.CharField(
@@ -281,18 +435,25 @@ class PaymentWebhookSerializer(serializers.Serializer):
     )
 
     payment_status = serializers.ChoiceField(
-        choices=["SUCCESS", "FAILED"],
+        choices=[
+            "SUCCESS",
+            "FAILED",
+        ]
     )
 
     def validate(self, attrs):
         payment_id = attrs["payment_id"]
-        transaction_id = attrs["transaction_id"]
+        transaction_id = attrs[
+            "transaction_id"
+        ]
 
         try:
-            payment = Payment.objects.select_related(
-                "booking"
-            ).get(
-                id=payment_id,
+            payment = (
+                Payment.objects.select_related(
+                    "booking"
+                ).get(
+                    id=payment_id,
+                )
             )
         except Payment.DoesNotExist:
             raise serializers.ValidationError(
@@ -303,12 +464,15 @@ class PaymentWebhookSerializer(serializers.Serializer):
                 }
             )
 
-        if payment.transaction_id != transaction_id:
+        if (
+            payment.transaction_id
+            != transaction_id
+        ):
             raise serializers.ValidationError(
                 {
                     "transaction_id": (
-                        "Transaction ID does not match "
-                        "the payment."
+                        "Transaction ID does not "
+                        "match the payment."
                     )
                 }
             )
@@ -328,7 +492,9 @@ class PaymentWebhookSerializer(serializers.Serializer):
         return attrs
 
 
-class BookingStatusSerializer(serializers.Serializer):
+class BookingStatusSerializer(
+    serializers.Serializer
+):
     status = serializers.ChoiceField(
         choices=[
             "pending",
@@ -341,9 +507,13 @@ class BookingStatusSerializer(serializers.Serializer):
     )
 
     def validate_status(self, value):
-        booking = self.context["booking"]
+        booking = self.context[
+            "booking"
+        ]
 
-        if not booking.can_transition_to(value):
+        if not booking.can_transition_to(
+            value
+        ):
             raise serializers.ValidationError(
                 f"Invalid booking status transition: "
                 f"{booking.status} → {value}."
@@ -352,10 +522,14 @@ class BookingStatusSerializer(serializers.Serializer):
         return value
 
 
-class ProfileImageSerializer(serializers.ModelSerializer):
+class ProfileImageSerializer(
+    serializers.ModelSerializer
+):
     class Meta:
         model = UserProfile
-        fields = ["image"]
+        fields = [
+            "image"
+        ]
 
     def validate_image(self, image):
         allowed_types = [
@@ -413,24 +587,32 @@ class ProfileImageSerializer(serializers.ModelSerializer):
         return image
 
 
-class ServiceImageSerializer(serializers.ModelSerializer):
+class ServiceImageSerializer(
+    serializers.ModelSerializer
+):
     class Meta:
         model = ServiceImage
+
         fields = [
             "id",
             "service",
             "image",
             "uploaded_at",
         ]
+
         read_only_fields = [
             "id",
             "service",
             "uploaded_at",
         ]
 
-class NotificationSerializer(serializers.ModelSerializer):
+
+class NotificationSerializer(
+    serializers.ModelSerializer
+):
     class Meta:
         model = Notification
+
         fields = [
             "id",
             "booking",

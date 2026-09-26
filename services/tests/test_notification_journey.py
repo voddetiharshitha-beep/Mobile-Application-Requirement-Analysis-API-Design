@@ -61,7 +61,7 @@ class NotificationJourneyTests(TransactionTestCase):
         )
 
         self.client.force_authenticate(
-            user=self.customer
+            user=self.provider_user
         )
 
     def create_booking(self, status="pending"):
@@ -92,6 +92,7 @@ class NotificationJourneyTests(TransactionTestCase):
         ).first()
 
         self.assertIsNotNone(notification)
+
         self.assertEqual(
             notification.message,
             "Your booking has been created successfully.",
@@ -201,6 +202,10 @@ class NotificationJourneyTests(TransactionTestCase):
     def test_booking_cancelled_notification(self):
         booking = self.create_booking()
 
+        self.client.force_authenticate(
+            user=self.customer
+        )
+
         response = self.client.post(
             f"/api/v1/services/bookings/{booking.id}/cancel/",
             format="json",
@@ -231,6 +236,10 @@ class NotificationJourneyTests(TransactionTestCase):
             booking=booking,
             notification_type="BOOKING_CREATED",
             message="Your booking has been created successfully.",
+        )
+
+        self.client.force_authenticate(
+            user=self.customer
         )
 
         response = self.client.get(
