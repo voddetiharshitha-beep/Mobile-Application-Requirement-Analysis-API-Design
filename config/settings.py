@@ -22,8 +22,8 @@ load_dotenv(BASE_DIR / '.env')
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-%$oh6^@g4-3anovmf%rmgq!xpgsxt45k0ad#4_(ytdpf)s2m%0'
 
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
@@ -159,33 +159,59 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "services.exceptions.custom_exception_handler",
 }
 
-PAYMENT_WEBHOOK_SECRET = "mock-webhook-secret"
+PAYMENT_WEBHOOK_SECRET = os.getenv("PAYMENT_WEBHOOK_SECRET")
+SERVICE_LIST_CACHE_TIMEOUT = 60
+MAX_IMAGE_UPLOAD_SIZE = 5 * 1024 * 1024
+
+# Redis configuration
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = os.getenv("REDIS_PORT")
 
 
-
+# Django Channels
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [("127.0.0.1", 6379)],
+            "hosts": [
+                (REDIS_HOST, int(REDIS_PORT))
+            ],
         },
     },
 }
 
-# Celery configuration
-CELERY_BROKER_URL = "redis://localhost:6379/0"
-CELERY_RESULT_BACKEND = "redis://localhost:6379/1"
 
-CELERY_ACCEPT_CONTENT = ["json"]
+# Celery configuration
+CELERY_BROKER_URL = (
+    f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
+)
+
+CELERY_RESULT_BACKEND = (
+    f"redis://{REDIS_HOST}:{REDIS_PORT}/1"
+)
+
+CELERY_ACCEPT_CONTENT = [
+    "json"
+]
+
 CELERY_TASK_SERIALIZER = "json"
+
 CELERY_RESULT_SERIALIZER = "json"
 
+
+# Django cache
 CACHES = {
     "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": "redis://127.0.0.1:6379/2",
+        "BACKEND": (
+            "django_redis.cache.RedisCache"
+        ),
+        "LOCATION": (
+            f"redis://{REDIS_HOST}:{REDIS_PORT}/2"
+        ),
         "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "CLIENT_CLASS": (
+                "django_redis.client.DefaultClient"
+            ),
         },
     }
 }

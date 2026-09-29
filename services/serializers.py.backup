@@ -1,8 +1,10 @@
+
 from datetime import datetime
-from django.conf import settings
+
 from PIL import Image, UnidentifiedImageError
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
+from django.contrib.auth.models import User
 
 from .models import (
     Booking,
@@ -12,7 +14,6 @@ from .models import (
     UserProfile,
     Notification,
 )
-
 
 User = get_user_model()
 
@@ -279,6 +280,28 @@ class BookingSerializer(
 
         return attrs
 
+    def create(self, validated_data):
+        service = validated_data["service"]
+
+        validated_data["customer"] = (
+            self.context["request"].user
+        )
+
+        # Automatically assign the provider
+        # belonging to the selected service.
+        validated_data["provider"] = (
+            service.provider
+        )
+
+        # Automatically use the service price.
+        validated_data["amount"] = (
+            service.price
+        )
+
+        return Booking.objects.create(
+            **validated_data
+        )
+
     def update(
         self,
         instance,
@@ -520,11 +543,12 @@ class ProfileImageSerializer(
                 "Only JPG, JPEG, and PNG images are allowed."
             )
 
-        if image.size > settings.MAX_IMAGE_UPLOAD_SIZE:
+        max_size = 5 * 1024 * 1024
+
+        if image.size > max_size:
             raise serializers.ValidationError(
                 "Image size must not exceed 5 MB."
             )
-            
 
         if not image.name:
             raise serializers.ValidationError(
@@ -596,11 +620,7 @@ class NotificationSerializer(
             "notification_type",
             "message",
         ]
-
-
-class ProfileSerializer(
-    serializers.ModelSerializer
-):
+class ProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [

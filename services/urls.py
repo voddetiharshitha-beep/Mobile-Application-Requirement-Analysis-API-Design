@@ -2,10 +2,6 @@
 from django.urls import path
 
 from .views import (
-    BookingCancelView,
-    BookingDetailView,
-    BookingListCreateView,
-    BookingStatusUpdateView,
     NotificationListView,
     PaymentInitiateView,
     PaymentProcessView,
@@ -28,21 +24,6 @@ urlpatterns = [
         name="service-detail",
     ),
     path(
-        "bookings/",
-        BookingListCreateView.as_view(),
-        name="booking-list-create",
-    ),
-    path(
-        "bookings/<uuid:pk>/",
-        BookingDetailView.as_view(),
-        name="booking-detail",
-    ),
-    path(
-        "bookings/<uuid:pk>/cancel/",
-        BookingCancelView.as_view(),
-        name="booking-cancel",
-    ),
-    path(
         "notifications/",
         NotificationListView.as_view(),
         name="notification-list",
@@ -56,11 +37,6 @@ urlpatterns = [
         "<uuid:service_id>/images/<int:image_id>/",
         ServiceImageDeleteView.as_view(),
         name="service-image-delete",
-    ),
-    path(
-        "bookings/<uuid:pk>/status/",
-        BookingStatusUpdateView.as_view(),
-        name="booking-status-update",
     ),
     path(
         "payments/initiate/",
