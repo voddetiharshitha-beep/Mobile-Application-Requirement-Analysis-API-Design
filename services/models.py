@@ -157,6 +157,7 @@ class Booking(models.Model):
             },
             "confirmed": {
                 "in_progress",
+                "cancelled",
             },
             "in_progress": {
                 "completed",
@@ -268,8 +269,23 @@ class Notification(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "recipient",
+                    "booking",
+                    "notification_type",
+                ],
+                name="unique_notification_per_booking_type",
+            )
+        ]
+
     def __str__(self):
-        return f"{self.notification_type} - {self.recipient.username}"
+        return (
+            f"{self.notification_type} - "
+            f"{self.recipient.username}"
+        )
 
 
 class UserProfile(models.Model):
@@ -301,3 +317,35 @@ class ServiceImage(models.Model):
 
     def __str__(self):
         return f"Image for {self.service.name}"
+    
+class BookingIdempotencyKey(models.Model):
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="booking_idempotency_keys",
+    )
+
+    key = models.CharField(
+        max_length=100,
+    )
+
+    booking = models.OneToOneField(
+        Booking,
+        on_delete=models.CASCADE,
+        related_name="idempotency_key_record",
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "key"],
+                name="unique_booking_idempotency_key_per_user",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.key}"   

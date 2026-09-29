@@ -1,3 +1,4 @@
+from rest_framework import serializers, generics
 from datetime import datetime
 from django.conf import settings
 from PIL import Image, UnidentifiedImageError
@@ -421,15 +422,14 @@ class PaymentWebhookSerializer(
 
     def validate(self, attrs):
         payment_id = attrs["payment_id"]
-        transaction_id = attrs[
-            "transaction_id"
-        ]
+        transaction_id = attrs["transaction_id"]
+        payment_status = attrs["payment_status"]
 
         try:
             payment = (
-                Payment.objects.select_related(
-                    "booking"
-                ).get(
+                Payment.objects
+                .select_related("booking")
+                .get(
                     id=payment_id,
                 )
             )
@@ -442,10 +442,7 @@ class PaymentWebhookSerializer(
                 }
             )
 
-        if (
-            payment.transaction_id
-            != transaction_id
-        ):
+        if payment.transaction_id != transaction_id:
             raise serializers.ValidationError(
                 {
                     "transaction_id": (
@@ -455,19 +452,106 @@ class PaymentWebhookSerializer(
                 }
             )
 
+        # Idempotency:
+        # A repeated webhook with the same
+        # final status is already processed.
+        if payment.payment_status == payment_status:
+            attrs["payment"] = payment
+            attrs["already_processed"] = True
+
+            return attrs
+
+        # Do not allow a payment that has already
+        # reached a final state to change status.
         if payment.payment_status != "PENDING":
             raise serializers.ValidationError(
                 {
                     "payment_id": (
-                        "Only pending payments can "
-                        "receive confirmation."
+                        "Payment has already been "
+                        "processed with a different status."
                     )
                 }
             )
 
         attrs["payment"] = payment
+        attrs["already_processed"] = False
 
         return attrs
+    
+
+
+class PaymentWebhookView(
+    generics.GenericAPIView
+):
+    serializer_class = PaymentProcessSerializer
+    permission_classes = []
+
+    def post(
+        self,
+        request,
+        *args,
+        **kwargs,
+    ):
+        webhook_secret = request.headers.get(
+            "X-Webhook-Secret"
+        )
+
+        if (
+            webhook_secret
+            != settings.PAYMENT_WEBHOOK_SECRET
+        ):
+            return build_api_error_response(
+                "Invalid webhook secret.",
+                "INVALID_WEBHOOK_SECRET",
+                status.HTTP_401_UNAUTHORIZED,
+            )
+
+        serializer = self.get_serializer(
+            data=request.data
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        payment = serializer.validated_data[
+            "payment"
+        ]
+
+        payment_status = serializer.validated_data[
+            "payment_status"
+        ]
+
+        already_processed = serializer.validated_data.get(
+            "already_processed",
+            False,
+        )
+
+        if not already_processed:
+            payment = process_payment_webhook(
+                payment=payment,
+                payment_status=payment_status,
+            )
+
+        return Response(
+            {
+                "success": True,
+                "message": (
+                    "Payment webhook processed successfully."
+                ),
+                "data": {
+                    "payment_id": str(
+                        payment.id
+                    ),
+                    "payment_status": (
+                        payment.payment_status
+                    ),
+                },
+            },
+            status=200,
+        )
+
+
 
 
 class BookingStatusSerializer(

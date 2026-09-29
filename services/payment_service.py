@@ -65,70 +65,76 @@ def process_payment_webhook(
     """
     Process a payment provider webhook.
 
-    Business rules:
-    - Update the payment status.
-    - When payment succeeds:
-      - confirm the booking
-      - notify connected WebSocket clients
-      - create payment-success notification
-      - create booking-confirmed notification
+    Database operations:
+    - Update payment status.
+    - When payment succeeds, confirm the booking.
+
+    Payment and booking updates are handled
+    inside one atomic transaction.
+
+    If either database update fails,
+    both database changes are rolled back.
     """
 
-    payment.payment_status = payment_status
+    with transaction.atomic():
 
-    payment.save(
-        update_fields=[
-            "payment_status",
-        ]
-    )
+        payment.payment_status = payment_status
 
-    if payment_status == "SUCCESS":
-        booking = payment.booking
-
-        booking.status = "confirmed"
-
-        booking.save(
+        payment.save(
             update_fields=[
-                "status",
-                "updated_at",
+                "payment_status",
             ]
         )
 
-        channel_layer = get_channel_layer()
+        if payment_status == "SUCCESS":
+            booking = payment.booking
 
-        async_to_sync(
-            channel_layer.group_send
-        )(
-            f"booking_{booking.id}",
-            {
-                "type": "booking_status_update",
-                "booking_id": str(
-                    booking.id
-                ),
-                "status": "confirmed",
-                "message": (
-                    "Booking status changed to confirmed."
-                ),
-            },
-        )
+            booking.status = "confirmed"
 
-        transaction.on_commit(
-            lambda: send_notification(
-                recipient_id=booking.customer_id,
-                booking_id=str(booking.id),
-                notification_type="PAYMENT_SUCCESSFUL",
-                message="Your payment was successful.",
+            booking.save(
+                update_fields=[
+                    "status",
+                    "updated_at",
+                ]
             )
-        )
 
-        transaction.on_commit(
-            lambda: send_notification(
-                recipient_id=booking.customer_id,
-                booking_id=str(booking.id),
-                notification_type="BOOKING_CONFIRMED",
-                message="Your booking has been confirmed.",
+            channel_layer = get_channel_layer()
+
+            transaction.on_commit(
+                lambda: async_to_sync(
+                    channel_layer.group_send
+                )(
+                    f"booking_{booking.id}",
+                    {
+                        "type": "booking_status_update",
+                        "booking_id": str(
+                            booking.id
+                        ),
+                        "status": "confirmed",
+                        "message": (
+                            "Booking status changed "
+                            "to confirmed."
+                        ),
+                    },
+                )
             )
-        )
+
+            transaction.on_commit(
+                lambda: send_notification(
+                    recipient_id=booking.customer_id,
+                    booking_id=str(booking.id),
+                    notification_type="PAYMENT_SUCCESSFUL",
+                    message="Your payment was successful.",
+                )
+            )
+
+            transaction.on_commit(
+                lambda: send_notification(
+                    recipient_id=booking.customer_id,
+                    booking_id=str(booking.id),
+                    notification_type="BOOKING_CONFIRMED",
+                    message="Your booking has been confirmed.",
+                )
+            )
 
     return payment
-

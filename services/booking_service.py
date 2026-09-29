@@ -1,8 +1,11 @@
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 
-from .models import Booking
+from .models import (
+    Booking,
+    BookingIdempotencyKey,
+)
 from .notification_service import send_notification
 
 
@@ -12,35 +15,91 @@ def create_booking(
     service,
     booking_date,
     booking_time,
+    idempotency_key=None,
 ):
     """
-    Create a new booking.
+    Create a new booking safely.
 
     Business rules:
     - The customer comes from the authenticated user.
     - The provider comes from the selected service.
     - The booking amount comes from the service price.
+
+    Idempotency:
+    - If the same customer sends the same
+      Idempotency-Key again, the existing booking
+      is returned.
+    - A database uniqueness constraint protects
+      against concurrent duplicate requests.
     """
 
-    booking = Booking.objects.create(
-        customer=customer,
-        provider=service.provider,
-        service=service,
-        booking_date=booking_date,
-        booking_time=booking_time,
-        amount=service.price,
-    )
+    # Check whether this customer has already used
+    # this idempotency key.
+    if idempotency_key:
+        try:
+            existing_key = (
+                BookingIdempotencyKey.objects
+                .select_related("booking")
+                .get(
+                    user=customer,
+                    key=idempotency_key,
+                )
+            )
 
-    transaction.on_commit(
-        lambda: send_notification(
-            recipient_id=booking.customer_id,
-            booking_id=str(booking.id),
-            notification_type="BOOKING_CREATED",
-            message="Your booking has been created successfully.",
-        )
-    )
+            return existing_key.booking, False
 
-    return booking
+        except BookingIdempotencyKey.DoesNotExist:
+            pass
+
+    try:
+        with transaction.atomic():
+
+            booking = Booking.objects.create(
+                customer=customer,
+                provider=service.provider,
+                service=service,
+                booking_date=booking_date,
+                booking_time=booking_time,
+                amount=service.price,
+            )
+
+            if idempotency_key:
+                BookingIdempotencyKey.objects.create(
+                    user=customer,
+                    key=idempotency_key,
+                    booking=booking,
+                )
+
+            transaction.on_commit(
+                lambda: send_notification(
+                    recipient_id=booking.customer_id,
+                    booking_id=str(booking.id),
+                    notification_type="BOOKING_CREATED",
+                    message=(
+                        "Your booking has been "
+                        "created successfully."
+                    ),
+                )
+            )
+
+            return booking, True
+
+    except IntegrityError:
+        # Another concurrent request may have created
+        # the same customer + idempotency key first.
+        if idempotency_key:
+            existing_key = (
+                BookingIdempotencyKey.objects
+                .select_related("booking")
+                .get(
+                    user=customer,
+                    key=idempotency_key,
+                )
+            )
+
+            return existing_key.booking, False
+
+        raise
 
 
 def cancel_booking(*, booking):
@@ -77,7 +136,9 @@ def cancel_booking(*, booking):
             "type": "booking_status_update",
             "booking_id": str(booking.id),
             "status": booking.status,
-            "message": "Booking status changed to cancelled.",
+            "message": (
+                "Booking status changed to cancelled."
+            ),
         },
     )
 
@@ -99,60 +160,81 @@ def update_booking_status(
     new_status,
 ):
     """
-    Update a booking status using
-    the model's state-transition rules.
+    Update a booking status safely under concurrent requests.
+
+    A database row lock ensures that concurrent requests
+    cannot successfully update the same booking at the same time.
     """
 
-    if not booking.can_transition_to(new_status):
-        raise ValueError(
-            f"Cannot change booking status from "
-            f"{booking.status} to {new_status}."
+    with transaction.atomic():
+
+        locked_booking = (
+            Booking.objects
+            .select_for_update()
+            .get(pk=booking.pk)
         )
 
-    booking.status = new_status
+        if not locked_booking.can_transition_to(
+            new_status
+        ):
+            raise ValueError(
+                f"Cannot change booking status from "
+                f"{locked_booking.status} to {new_status}."
+            )
 
-    booking.save(
-        update_fields=[
-            "status",
-            "updated_at",
-        ]
-    )
+        locked_booking.status = new_status
 
-    channel_layer = get_channel_layer()
+        locked_booking.save(
+            update_fields=[
+                "status",
+                "updated_at",
+            ]
+        )
 
-    async_to_sync(
-        channel_layer.group_send
-    )(
-        f"booking_{booking.id}",
-        {
-            "type": "booking_status_update",
-            "booking_id": str(booking.id),
-            "status": booking.status,
-            "message": (
-                f"Booking status changed to "
-                f"{booking.status}."
-            ),
-        },
-    )
+        channel_layer = get_channel_layer()
 
-    if new_status == "in_progress":
         transaction.on_commit(
-            lambda: send_notification(
-                recipient_id=booking.customer_id,
-                booking_id=str(booking.id),
-                notification_type="PROVIDER_STARTED",
-                message="The provider has started your service.",
+            lambda: async_to_sync(
+                channel_layer.group_send
+            )(
+                f"booking_{locked_booking.id}",
+                {
+                    "type": "booking_status_update",
+                    "booking_id": str(
+                        locked_booking.id
+                    ),
+                    "status": locked_booking.status,
+                    "message": (
+                        f"Booking status changed to "
+                        f"{locked_booking.status}."
+                    ),
+                },
             )
         )
 
-    elif new_status == "completed":
-        transaction.on_commit(
-            lambda: send_notification(
-                recipient_id=booking.customer_id,
-                booking_id=str(booking.id),
-                notification_type="BOOKING_COMPLETED",
-                message="Your booking has been completed.",
+        if new_status == "in_progress":
+            transaction.on_commit(
+                lambda: send_notification(
+                    recipient_id=locked_booking.customer_id,
+                    booking_id=str(locked_booking.id),
+                    notification_type="PROVIDER_STARTED",
+                    message=(
+                        "The provider has started "
+                        "your service."
+                    ),
+                )
             )
-        )
 
-    return booking
+        elif new_status == "completed":
+            transaction.on_commit(
+                lambda: send_notification(
+                    recipient_id=locked_booking.customer_id,
+                    booking_id=str(locked_booking.id),
+                    notification_type="BOOKING_COMPLETED",
+                    message=(
+                        "Your booking has been completed."
+                    ),
+                )
+            )
+
+        return locked_booking
