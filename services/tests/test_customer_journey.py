@@ -93,7 +93,7 @@ class CustomerJourneyTests(TransactionTestCase):
         booking_date = date.today() + timedelta(days=1)
 
         response = self.client.post(
-            "/api/v1/services/bookings/",
+            "/api/v1/bookings/",
             {
                 "provider": str(self.provider.id),
                 "service": str(self.service.id),
@@ -106,7 +106,7 @@ class CustomerJourneyTests(TransactionTestCase):
         self.assertEqual(response.status_code, 201)
 
         booking = Booking.objects.get(
-            id=response.data["id"]
+            id=response.data["data"]["id"]
         )
 
         self.assertEqual(
@@ -140,7 +140,7 @@ class CustomerJourneyTests(TransactionTestCase):
         booking_date = date.today() + timedelta(days=1)
 
         response = self.client.post(
-            "/api/v1/services/bookings/",
+            "/api/v1/bookings/",
             {
                 "provider": str(self.provider.id),
                 "service": str(self.service.id),
@@ -153,7 +153,7 @@ class CustomerJourneyTests(TransactionTestCase):
         self.assertEqual(response.status_code, 201)
 
         booking = Booking.objects.get(
-            id=response.data["id"]
+            id=response.data["data"]["id"]
         )
 
         notification = Notification.objects.filter(
@@ -189,7 +189,7 @@ class CustomerJourneyTests(TransactionTestCase):
         self.authenticate()
 
         response = self.client.get(
-            "/api/v1/services/bookings/"
+            "/api/v1/bookings/"
         )
 
         self.assertEqual(response.status_code, 200)

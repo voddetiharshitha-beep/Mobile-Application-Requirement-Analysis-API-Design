@@ -159,7 +159,7 @@ class NotificationJourneyTests(TransactionTestCase):
         )
 
         response = self.client.post(
-            f"/api/v1/services/bookings/{booking.id}/status/",
+            f"/api/v1/bookings/{booking.id}/status/",
             {
                 "status": "in_progress",
             },
@@ -182,7 +182,7 @@ class NotificationJourneyTests(TransactionTestCase):
         )
 
         response = self.client.post(
-            f"/api/v1/services/bookings/{booking.id}/status/",
+            f"/api/v1/bookings/{booking.id}/status/",
             {
                 "status": "completed",
             },
@@ -207,7 +207,7 @@ class NotificationJourneyTests(TransactionTestCase):
         )
 
         response = self.client.post(
-            f"/api/v1/services/bookings/{booking.id}/cancel/",
+            f"/api/v1/bookings/{booking.id}/cancel/",
             format="json",
         )
 

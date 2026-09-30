@@ -1,9 +1,10 @@
-from rest_framework import serializers, generics
 from datetime import datetime
+
 from django.conf import settings
-from PIL import Image, UnidentifiedImageError
 from django.contrib.auth import get_user_model
-from rest_framework import serializers
+from PIL import Image, UnidentifiedImageError
+from rest_framework import generics, serializers, status
+from rest_framework.response import Response
 
 from .models import (
     Booking,
@@ -90,7 +91,66 @@ class RegisterSerializer(serializers.ModelSerializer):
         )
 
         return user
+class PasswordChangeSerializer(serializers.Serializer):
+    old_password = serializers.CharField(
+        write_only=True,
+        required=True,
+    )
 
+    new_password = serializers.CharField(
+        write_only=True,
+        required=True,
+        min_length=8,
+    )
+
+    new_password_confirm = serializers.CharField(
+        write_only=True,
+        required=True,
+    )
+
+    def validate_old_password(self, value):
+        user = self.context["request"].user
+
+        if not user.check_password(value):
+            raise serializers.ValidationError(
+                "Current password is incorrect."
+            )
+
+        return value
+
+    def validate(self, attrs):
+        if (
+            attrs["new_password"]
+            != attrs["new_password_confirm"]
+        ):
+            raise serializers.ValidationError(
+                {
+                    "new_password_confirm": (
+                        "New passwords do not match."
+                    )
+                }
+            )
+
+        if attrs["old_password"] == attrs["new_password"]:
+            raise serializers.ValidationError(
+                {
+                    "new_password": (
+                        "New password must be different "
+                        "from the current password."
+                    )
+                }
+            )
+
+        from django.contrib.auth.password_validation import (
+            validate_password,
+        )
+
+        validate_password(
+            attrs["new_password"],
+            self.context["request"].user,
+        )
+
+        return attrs
 
 class ServiceSerializer(
     serializers.ModelSerializer
@@ -477,7 +537,23 @@ class PaymentWebhookSerializer(
         attrs["already_processed"] = False
 
         return attrs
-    
+
+
+def build_api_error_response(
+    message,
+    code,
+    status_code,
+):
+    return Response(
+        {
+            "success": False,
+            "error": {
+                "message": message,
+                "code": code,
+            },
+        },
+        status=status_code,
+    )
 
 
 class PaymentWebhookView(

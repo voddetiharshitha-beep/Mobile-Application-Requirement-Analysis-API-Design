@@ -74,7 +74,7 @@ class ProviderJourneyTests(TransactionTestCase):
 
     def test_booking_can_be_confirmed(self):
         response = self.client.post(
-            f"/api/v1/services/bookings/{self.booking.id}/status/",
+            f"/api/v1/bookings/{self.booking.id}/status/",
             {
                 "status": "confirmed",
             },
@@ -95,7 +95,7 @@ class ProviderJourneyTests(TransactionTestCase):
         self.booking.save(update_fields=["status"])
 
         response = self.client.post(
-            f"/api/v1/services/bookings/{self.booking.id}/status/",
+            f"/api/v1/bookings/{self.booking.id}/status/",
             {
                 "status": "in_progress",
             },
@@ -124,7 +124,7 @@ class ProviderJourneyTests(TransactionTestCase):
         self.booking.save(update_fields=["status"])
 
         response = self.client.post(
-            f"/api/v1/services/bookings/{self.booking.id}/status/",
+            f"/api/v1/bookings/{self.booking.id}/status/",
             {
                 "status": "completed",
             },
@@ -150,7 +150,7 @@ class ProviderJourneyTests(TransactionTestCase):
 
     def test_invalid_status_transition_is_rejected(self):
         response = self.client.post(
-            f"/api/v1/services/bookings/{self.booking.id}/status/",
+            f"/api/v1/bookings/{self.booking.id}/status/",
             {
                 "status": "completed",
             },

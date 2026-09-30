@@ -1,3 +1,4 @@
+from django.contrib.auth.password_validation import validate_password
 from django.conf import settings
 from django.core.cache import cache
 from rest_framework import generics, status
@@ -6,6 +7,8 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (
     Booking,
@@ -21,6 +24,7 @@ from .serializers import (
     BookingSerializer,
     BookingStatusSerializer,
     NotificationSerializer,
+    PasswordChangeSerializer,
     PaymentInitiateSerializer,
     PaymentProcessSerializer,
     PaymentWebhookSerializer,
@@ -68,6 +72,66 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = [AllowAny]
 
 
+class PasswordChangeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = PasswordChangeSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+
+        serializer.is_valid(raise_exception=True)
+
+        request.user.set_password(
+            serializer.validated_data["new_password"]
+        )
+        request.user.save(
+            update_fields=["password"]
+        )
+
+        return Response(
+            {
+                "success": True,
+                "message": "Password changed successfully.",
+                "error_code": None,
+                "data": None,
+            },
+            status=status.HTTP_200_OK,
+        )
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        refresh_token = request.data.get("refresh")
+
+        if not refresh_token:
+            return build_api_error_response(
+                message="Refresh token is required.",
+                error_code="REFRESH_TOKEN_REQUIRED",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+
+            return Response(
+                {
+                    "success": True,
+                    "message": "Logout successful.",
+                    "error_code": None,
+                    "data": None,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except TokenError:
+            return build_api_error_response(
+                message="Invalid or already blacklisted refresh token.",
+                error_code="INVALID_REFRESH_TOKEN",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
 class ServiceListCreateView(generics.ListCreateAPIView):
     serializer_class = ServiceSerializer
     permission_classes = [IsAuthenticated]
@@ -606,7 +670,7 @@ class PaymentProcessView(
 
         payment = process_payment(
             payment=payment,
-            result=result,
+            payment_result=result,
         )
 
         return Response(
