@@ -1,5 +1,7 @@
+
 from datetime import date, timedelta
 from decimal import Decimal
+import secrets
 
 from django.contrib.auth.models import User
 from django.test import TransactionTestCase, override_settings
@@ -15,26 +17,34 @@ from services.models import (
 )
 
 
-@override_settings(
-    CELERY_TASK_ALWAYS_EAGER=True,
-    CELERY_TASK_EAGER_PROPAGATES=True,
-    PAYMENT_WEBHOOK_SECRET="test-webhook-secret",
-)
 class PaymentJourneyTests(TransactionTestCase):
 
     def setUp(self):
         self.client = APIClient()
 
+        # Generate test-only credentials/secrets at runtime.
+        # Nothing sensitive is stored in source code.
+        self.test_password = secrets.token_urlsafe(24)
+        self.webhook_secret = secrets.token_urlsafe(32)
+
+        self.settings_override = override_settings(
+            CELERY_TASK_ALWAYS_EAGER=True,
+            CELERY_TASK_EAGER_PROPAGATES=True,
+            PAYMENT_WEBHOOK_SECRET=self.webhook_secret,
+        )
+        self.settings_override.enable()
+        self.addCleanup(self.settings_override.disable)
+
         self.customer = User.objects.create_user(
             username="payment_customer",
             email="payment_customer@example.com",
-            password="TestPassword123!",
+            password=self.test_password,
         )
 
         self.provider_user = User.objects.create_user(
             username="payment_provider",
             email="payment_provider@example.com",
-            password="TestPassword123!",
+            password=self.test_password,
         )
 
         self.category = Category.objects.create(
@@ -152,7 +162,7 @@ class PaymentJourneyTests(TransactionTestCase):
                 "payment_status": "SUCCESS",
             },
             format="json",
-            HTTP_X_WEBHOOK_SECRET="wrong-secret",
+            HTTP_X_WEBHOOK_SECRET="invalid-test-secret",
         )
 
         self.assertEqual(
@@ -184,7 +194,7 @@ class PaymentJourneyTests(TransactionTestCase):
                 "payment_status": "SUCCESS",
             },
             format="json",
-            HTTP_X_WEBHOOK_SECRET="test-webhook-secret",
+            HTTP_X_WEBHOOK_SECRET=self.webhook_secret,
         )
 
         self.assertEqual(
@@ -218,7 +228,7 @@ class PaymentJourneyTests(TransactionTestCase):
                 "payment_status": "SUCCESS",
             },
             format="json",
-            HTTP_X_WEBHOOK_SECRET="test-webhook-secret",
+            HTTP_X_WEBHOOK_SECRET=self.webhook_secret,
         )
 
         self.assertEqual(
@@ -258,3 +268,4 @@ class PaymentJourneyTests(TransactionTestCase):
         self.assertIsNotNone(
             confirmed_notification
         )
+

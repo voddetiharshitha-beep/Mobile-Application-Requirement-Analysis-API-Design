@@ -1,12 +1,15 @@
 from django.urls import path
 
 from .views import (
+    NotificationListView,
+    PaymentInitiateView,
+    PaymentProcessView,
+    PaymentWebhookView,
     ServiceDetailView,
     ServiceListCreateView,
     ServiceImageListCreateView,
     ServiceImageDeleteView,
 )
-
 
 urlpatterns = [
     path(
@@ -28,5 +31,29 @@ urlpatterns = [
         "<uuid:service_id>/images/<uuid:pk>/",
         ServiceImageDeleteView.as_view(),
         name="service-image-delete",
+    ),
+
+    # Notification endpoints
+    path(
+        "notifications/",
+        NotificationListView.as_view(),
+        name="notification-list",
+    ),
+
+    # Payment endpoints
+    path(
+        "payments/initiate/",
+        PaymentInitiateView.as_view(),
+        name="payment-initiate",
+    ),
+    path(
+        "payments/<uuid:pk>/process/",
+        PaymentProcessView.as_view(),
+        name="payment-process",
+    ),
+    path(
+        "payments/webhook/",
+        PaymentWebhookView.as_view(),
+        name="payment-webhook",
     ),
 ]

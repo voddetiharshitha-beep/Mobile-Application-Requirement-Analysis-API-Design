@@ -1,3 +1,7 @@
+import re
+
+from PIL import Image, UnidentifiedImageError
+
 from datetime import datetime
 
 from django.conf import settings
@@ -7,17 +11,67 @@ from rest_framework import generics, serializers, status
 from rest_framework.response import Response
 
 from .models import (
-    Booking,
+ Booking,
     Payment,
+    Provider,
     Service,
     ServiceImage,
     UserProfile,
     Notification,
 )
 
-
 User = get_user_model()
+class StrictModelSerializer(serializers.ModelSerializer):
+    """
+    Strict serializer that rejects:
+    1. Unknown fields.
+    2. Read-only fields supplied by the client.
+    """
 
+    def to_internal_value(self, data):
+        if hasattr(data, "keys"):
+            incoming_fields = set(data.keys())
+            allowed_fields = set(self.fields.keys())
+
+            unexpected_fields = (
+                incoming_fields - allowed_fields
+            )
+
+            if unexpected_fields:
+                raise serializers.ValidationError(
+                    {
+                        field: [
+                            "This field is not allowed."
+                        ]
+                        for field in sorted(
+                            unexpected_fields
+                        )
+                    }
+                )
+
+            read_only_fields = {
+                field_name
+                for field_name, field in self.fields.items()
+                if field.read_only
+            }
+
+            supplied_read_only_fields = (
+                incoming_fields & read_only_fields
+            )
+
+            if supplied_read_only_fields:
+                raise serializers.ValidationError(
+                    {
+                        field: [
+                            "This field is read-only."
+                        ]
+                        for field in sorted(
+                            supplied_read_only_fields
+                        )
+                    }
+                )
+
+        return super().to_internal_value(data)
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
@@ -180,14 +234,15 @@ class ServiceSerializer(
 
 
 class BookingSerializer(
-    serializers.ModelSerializer
+    StrictModelSerializer
 ):
     customer = serializers.PrimaryKeyRelatedField(
         read_only=True,
     )
 
     provider = serializers.PrimaryKeyRelatedField(
-        read_only=True,
+        queryset=Provider.objects.all(),
+        required=False,
     )
 
     class Meta:
@@ -209,7 +264,6 @@ class BookingSerializer(
         read_only_fields = [
             "id",
             "customer",
-            "provider",
             "amount",
             "status",
             "created_at",
@@ -248,7 +302,27 @@ class BookingSerializer(
                 }
             )
 
-        provider = service.provider
+        # The provider is determined by the selected service.
+        service_provider = service.provider
+
+        # If the client supplies a provider,
+        # make sure it matches the service provider.
+        requested_provider = attrs.get("provider")
+
+        if requested_provider is not None:
+            if requested_provider != service_provider:
+                raise serializers.ValidationError(
+                    {
+                        "provider": (
+                            "Provider does not match "
+                            "the selected service."
+                        )
+                    }
+                )
+
+        # Always use the provider belonging to the service.
+        attrs["provider"] = service_provider
+        provider = service_provider
 
         if not provider.status:
             raise serializers.ValidationError(
@@ -391,7 +465,6 @@ class BookingSerializer(
             instance,
             validated_data,
         )
-
 
 class PaymentInitiateSerializer(
     serializers.ModelSerializer
@@ -724,6 +797,7 @@ class ProfileImageSerializer(
         return image
 
 
+
 class ServiceImageSerializer(
     serializers.ModelSerializer
 ):
@@ -742,6 +816,176 @@ class ServiceImageSerializer(
             "service",
             "uploaded_at",
         ]
+
+    def validate_image(self, image):
+        """
+        Secure validation for service image uploads.
+
+        Checks:
+        1. File exists
+        2. File size
+        3. Safe filename
+        4. Allowed extension
+        5. Declared MIME type
+        6. Actual image content
+        7. MIME type matches actual image format
+        """
+
+        # ---------------------------------------------------------
+        # 1. MISSING FILE
+        # ---------------------------------------------------------
+
+        if image is None:
+            raise serializers.ValidationError(
+                "Image file is required."
+            )
+
+        # ---------------------------------------------------------
+        # 2. FILE SIZE
+        # ---------------------------------------------------------
+
+        if image.size > settings.MAX_IMAGE_UPLOAD_SIZE:
+            raise serializers.ValidationError(
+                "Image size must not exceed 5 MB."
+            )
+
+        # ---------------------------------------------------------
+        # 3. FILENAME REQUIRED
+        # ---------------------------------------------------------
+
+        if not image.name:
+            raise serializers.ValidationError(
+                "Filename is required."
+            )
+
+        filename = image.name
+
+        # ---------------------------------------------------------
+        # 4. MALICIOUS FILENAME PROTECTION
+        # ---------------------------------------------------------
+
+        # Reject path traversal and null-byte filenames.
+        if (
+            "/" in filename
+            or "\\" in filename
+            or "\x00" in filename
+            or ".." in filename
+        ):
+            raise serializers.ValidationError(
+                "Invalid filename."
+            )
+
+        # Reject control characters.
+        if any(
+            ord(character) < 32 or ord(character) == 127
+            for character in filename
+        ):
+            raise serializers.ValidationError(
+                "Invalid filename."
+            )
+
+        # Keep filenames reasonably short and predictable.
+        if len(filename) > 100:
+            raise serializers.ValidationError(
+                "Filename is too long."
+            )
+
+        # ---------------------------------------------------------
+        # 5. ALLOWED EXTENSION
+        # ---------------------------------------------------------
+
+        filename_pattern = re.compile(
+            r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,94}\.(jpg|jpeg|png)$",
+            re.IGNORECASE,
+        )
+
+        if not filename_pattern.fullmatch(filename):
+            raise serializers.ValidationError(
+                "Filename must use a valid .jpg, .jpeg, or .png extension."
+            )
+
+        # ---------------------------------------------------------
+        # 6. DECLARED MIME TYPE
+        # ---------------------------------------------------------
+
+        allowed_mime_types = {
+            "image/jpeg",
+            "image/png",
+        }
+
+        if image.content_type not in allowed_mime_types:
+            raise serializers.ValidationError(
+                "Only JPG, JPEG, and PNG images are allowed."
+            )
+
+        # ---------------------------------------------------------
+        # 7. VERIFY ACTUAL IMAGE CONTENT
+        # ---------------------------------------------------------
+
+        try:
+            image.seek(0)
+
+            image_file = Image.open(image)
+
+            detected_format = image_file.format
+
+            image_file.verify()
+
+        except (
+            UnidentifiedImageError,
+            OSError,
+            SyntaxError,
+        ):
+            raise serializers.ValidationError(
+                "Invalid image file."
+            )
+
+        finally:
+            image.seek(0)
+
+        # ---------------------------------------------------------
+        # 8. MIME TYPE MUST MATCH ACTUAL FILE FORMAT
+        # ---------------------------------------------------------
+
+        expected_formats = {
+            "image/jpeg": "JPEG",
+            "image/png": "PNG",
+        }
+
+        expected_format = expected_formats.get(
+            image.content_type
+        )
+
+        if detected_format != expected_format:
+            raise serializers.ValidationError(
+                "File content does not match its MIME type."
+            )
+
+        # ---------------------------------------------------------
+        # 9. EXTENSION MUST MATCH ACTUAL FORMAT
+        # ---------------------------------------------------------
+
+        extension = filename.rsplit(
+            ".",
+            1
+        )[1].lower()
+
+        extension_formats = {
+            "jpg": "JPEG",
+            "jpeg": "JPEG",
+            "png": "PNG",
+        }
+
+        if extension_formats[extension] != detected_format:
+            raise serializers.ValidationError(
+                "File extension does not match its actual image format."
+            )
+
+        image.seek(0)
+
+        return image
+
+
 
 
 class NotificationSerializer(

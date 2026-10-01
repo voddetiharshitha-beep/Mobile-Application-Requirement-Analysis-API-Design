@@ -1,6 +1,7 @@
 from datetime import date, time, timedelta
 
 from django.contrib.auth.models import User
+from django.utils.crypto import get_random_string
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -15,6 +16,8 @@ from services.models import (
 class AuthorizationAuditTest(APITestCase):
 
     def setUp(self):
+        self.test_password = get_random_string(32)
+
         # ==============================
         # CREATE USERS
         # ==============================
@@ -22,31 +25,31 @@ class AuthorizationAuditTest(APITestCase):
         self.admin = User.objects.create_superuser(
             username="audit_admin",
             email="audit_admin@example.com",
-            password="AuditAdmin#7392!",
+            password=self.test_password,
         )
 
         self.provider_user = User.objects.create_user(
             username="audit_provider",
             email="audit_provider@example.com",
-            password="AuditProvider#7392!",
+            password=self.test_password,
         )
 
         self.provider_user_2 = User.objects.create_user(
             username="audit_provider_2",
             email="audit_provider_2@example.com",
-            password="AuditProvider2#7392!",
+            password=self.test_password,
         )
 
         self.customer = User.objects.create_user(
             username="audit_customer",
             email="audit_customer@example.com",
-            password="AuditCustomer#7392!",
+            password=self.test_password,
         )
 
         self.customer_2 = User.objects.create_user(
             username="audit_customer_2",
             email="audit_customer2@example.com",
-            password="AuditCustomer2#7392!",
+            password=self.test_password,
         )
 
         # ==============================
@@ -391,7 +394,6 @@ class AuthorizationAuditTest(APITestCase):
             response.status_code,
             status.HTTP_200_OK,
         )
-
 
     # ==========================================
     # IDOR TESTING

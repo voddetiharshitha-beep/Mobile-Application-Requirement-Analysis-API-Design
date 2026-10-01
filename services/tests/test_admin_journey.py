@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
+from django.utils.crypto import get_random_string
 
 from services.models import Category, Provider, ProviderProfile, Service
 
@@ -10,10 +11,12 @@ from services.models import Category, Provider, ProviderProfile, Service
 class AdminJourneyTests(TestCase):
 
     def setUp(self):
+        self.test_password = get_random_string(32)
+
         self.admin_user = User.objects.create_superuser(
             username="admin_test",
             email="admin@example.com",
-            password="AdminPassword123!",
+            password=self.test_password,
         )
 
         self.category = Category.objects.create(
@@ -25,7 +28,7 @@ class AdminJourneyTests(TestCase):
         self.provider_user = User.objects.create_user(
             username="admin_provider",
             email="provider@example.com",
-            password="TestPassword123!",
+            password=self.test_password,
         )
 
         self.provider = Provider.objects.create(

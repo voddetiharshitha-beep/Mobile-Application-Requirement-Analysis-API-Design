@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from django.contrib.auth.models import User
 from django.test import TransactionTestCase, override_settings
+from django.utils.crypto import get_random_string
 from rest_framework.test import APIClient
 
 from services.models import (
@@ -22,16 +23,18 @@ from services.models import (
 class AutomatedWorkflowTests(TransactionTestCase):
 
     def setUp(self):
+        self.test_password = get_random_string(32)
+
         self.customer = User.objects.create_user(
             username="workflow_customer",
             email="workflow_customer@example.com",
-            password="TestPassword123!",
+            password=self.test_password,
         )
 
         self.provider_user = User.objects.create_user(
             username="workflow_provider",
             email="workflow_provider@example.com",
-            password="TestPassword123!",
+            password=self.test_password,
         )
 
         self.category = Category.objects.create(
@@ -229,9 +232,9 @@ class AutomatedWorkflowTests(TransactionTestCase):
         )
 
         self.assertEqual(
-    booking.booking_time.strftime("%H:%M:%S"),
-    self.booking_time,
-      )
+            booking.booking_time.strftime("%H:%M:%S"),
+            self.booking_time,
+        )
 
     def test_concurrent_duplicate_requests_create_only_one_booking(
         self,

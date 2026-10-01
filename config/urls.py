@@ -1,10 +1,8 @@
 from django.contrib import admin
 from django.urls import include, path
-from rest_framework_simplejwt.views import (
-    TokenObtainPairView,
-    TokenRefreshView,
-)
+from rest_framework_simplejwt.views import TokenRefreshView
 from services.views import (
+    LoginView,
     LogoutView,
     PasswordChangeView,
     ProfileImageUploadView,
@@ -41,10 +39,10 @@ urlpatterns = [
         name="logout",
     ),
     path(
-        "api/v1/token/",
-        TokenObtainPairView.as_view(),
-        name="token-obtain-pair",
-    ),
+    "api/v1/token/",
+    LoginView.as_view(),
+    name="token-obtain",
+),
     path(
         "api/v1/token/refresh/",
         TokenRefreshView.as_view(),

@@ -6,9 +6,11 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .models import (
     Booking,
@@ -65,15 +67,20 @@ def build_api_error_response(
         },
         status=status_code,
     )
-
+class LoginView(TokenObtainPairView):
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
 
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
-
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "registration"
 
 class PasswordChangeView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password"
 
     def post(self, request):
         serializer = PasswordChangeSerializer(
@@ -327,7 +334,8 @@ class BookingListCreateView(
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = ServicePagination
-
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking"
     def create(
         self,
         request,
@@ -560,7 +568,8 @@ class PaymentInitiateView(
 ):
     serializer_class = PaymentInitiateSerializer
     permission_classes = [IsAuthenticated]
-
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "payment"
     def create(
         self,
         request,
@@ -621,7 +630,8 @@ class PaymentProcessView(
 ):
     serializer_class = PaymentProcessSerializer
     permission_classes = [IsAuthenticated]
-
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "payment"
     def post(
         self,
         request,
@@ -709,7 +719,8 @@ class PaymentWebhookView(
 ):
     serializer_class = PaymentWebhookSerializer
     permission_classes = []
-
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "payment"
     def post(
         self,
         request,

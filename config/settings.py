@@ -158,6 +158,16 @@ REST_FRAMEWORK = {
     ),
     "PAGE_SIZE": 10,
     "EXCEPTION_HANDLER": "services.exceptions.custom_exception_handler",
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.ScopedRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "login": "5/minute",
+        "registration": "5/minute",
+        "password": "5/minute",
+        "booking": "5/minute",
+        "payment": "5/minute",
+    },
 }
 
 PAYMENT_WEBHOOK_SECRET = os.getenv("PAYMENT_WEBHOOK_SECRET")

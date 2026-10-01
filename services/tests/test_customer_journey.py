@@ -1,9 +1,9 @@
 from datetime import date, time, timedelta
 from decimal import Decimal
 
-
 from django.contrib.auth.models import User
 from django.test import TransactionTestCase, override_settings
+from django.utils.crypto import get_random_string
 from rest_framework.test import APIClient
 
 from services.models import Booking, Category, Notification, Provider, Service
@@ -18,16 +18,18 @@ class CustomerJourneyTests(TransactionTestCase):
     def setUp(self):
         self.client = APIClient()
 
+        self.test_password = get_random_string(32)
+
         self.customer = User.objects.create_user(
             username="customer_test",
             email="customer@example.com",
-            password="TestPassword123!",
+            password=self.test_password,
         )
 
         self.provider_user = User.objects.create_user(
             username="provider_test",
             email="provider@example.com",
-            password="TestPassword123!",
+            password=self.test_password,
         )
 
         self.category = Category.objects.create(
@@ -58,7 +60,7 @@ class CustomerJourneyTests(TransactionTestCase):
             "/api/v1/token/",
             {
                 "username": "customer_test",
-                "password": "TestPassword123!",
+                "password": self.test_password,
             },
             format="json",
         )
@@ -173,7 +175,7 @@ class CustomerJourneyTests(TransactionTestCase):
         other_customer = User.objects.create_user(
             username="other_customer",
             email="other@example.com",
-            password="TestPassword123!",
+            password=get_random_string(32),
         )
 
         Booking.objects.create(

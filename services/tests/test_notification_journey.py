@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.contrib.auth.models import User
 from django.test import TransactionTestCase, override_settings
+from django.utils.crypto import get_random_string
 from rest_framework.test import APIClient
 
 from services.models import (
@@ -15,26 +16,26 @@ from services.models import (
 )
 
 
-@override_settings(
-    CELERY_TASK_ALWAYS_EAGER=True,
-    CELERY_TASK_EAGER_PROPAGATES=True,
-    PAYMENT_WEBHOOK_SECRET="test-webhook-secret",
-)
+TEST_WEBHOOK_SECRET = get_random_string(64)
+
+
 class NotificationJourneyTests(TransactionTestCase):
 
     def setUp(self):
         self.client = APIClient()
 
+        self.test_password = get_random_string(32)
+
         self.customer = User.objects.create_user(
             username="notification_customer",
             email="notification_customer@example.com",
-            password="TestPassword123!",
+            password=self.test_password,
         )
 
         self.provider_user = User.objects.create_user(
             username="notification_provider",
             email="notification_provider@example.com",
-            password="TestPassword123!",
+            password=self.test_password,
         )
 
         self.category = Category.objects.create(
@@ -75,6 +76,10 @@ class NotificationJourneyTests(TransactionTestCase):
             status=status,
         )
 
+    @override_settings(
+        CELERY_TASK_ALWAYS_EAGER=True,
+        CELERY_TASK_EAGER_PROPAGATES=True,
+    )
     def test_booking_created_notification(self):
         booking = self.create_booking()
 
@@ -98,6 +103,11 @@ class NotificationJourneyTests(TransactionTestCase):
             "Your booking has been created successfully.",
         )
 
+    @override_settings(
+        CELERY_TASK_ALWAYS_EAGER=True,
+        CELERY_TASK_EAGER_PROPAGATES=True,
+        PAYMENT_WEBHOOK_SECRET=TEST_WEBHOOK_SECRET,
+    )
     def test_payment_successful_and_booking_confirmed_notifications(
         self,
     ):
@@ -119,7 +129,7 @@ class NotificationJourneyTests(TransactionTestCase):
                 "payment_status": "SUCCESS",
             },
             format="json",
-            HTTP_X_WEBHOOK_SECRET="test-webhook-secret",
+            HTTP_X_WEBHOOK_SECRET=TEST_WEBHOOK_SECRET,
         )
 
         self.assertEqual(response.status_code, 200)
@@ -153,6 +163,10 @@ class NotificationJourneyTests(TransactionTestCase):
             ).exists()
         )
 
+    @override_settings(
+        CELERY_TASK_ALWAYS_EAGER=True,
+        CELERY_TASK_EAGER_PROPAGATES=True,
+    )
     def test_provider_started_notification(self):
         booking = self.create_booking(
             status="confirmed"
@@ -176,6 +190,10 @@ class NotificationJourneyTests(TransactionTestCase):
             ).exists()
         )
 
+    @override_settings(
+        CELERY_TASK_ALWAYS_EAGER=True,
+        CELERY_TASK_EAGER_PROPAGATES=True,
+    )
     def test_booking_completed_notification(self):
         booking = self.create_booking(
             status="in_progress"
@@ -199,6 +217,10 @@ class NotificationJourneyTests(TransactionTestCase):
             ).exists()
         )
 
+    @override_settings(
+        CELERY_TASK_ALWAYS_EAGER=True,
+        CELERY_TASK_EAGER_PROPAGATES=True,
+    )
     def test_booking_cancelled_notification(self):
         booking = self.create_booking()
 
@@ -228,6 +250,10 @@ class NotificationJourneyTests(TransactionTestCase):
             ).exists()
         )
 
+    @override_settings(
+        CELERY_TASK_ALWAYS_EAGER=True,
+        CELERY_TASK_EAGER_PROPAGATES=True,
+    )
     def test_customer_can_list_notifications(self):
         booking = self.create_booking()
 
