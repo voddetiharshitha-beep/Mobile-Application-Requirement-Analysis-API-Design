@@ -172,6 +172,18 @@ class Booking(models.Model):
             set(),
         )
 
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=[
+                    "provider",
+                    "booking_date",
+                    "booking_time",
+                ],
+                name="booking_provider_date_time_idx",
+            ),
+        ]
+
     def __str__(self):
         return f"{self.service.name} - {self.customer.username}"
 
@@ -236,6 +248,10 @@ class Notification(models.Model):
         ("PROVIDER_STARTED", "Provider Started Service"),
         ("BOOKING_COMPLETED", "Booking Completed"),
         ("BOOKING_CANCELLED", "Booking Cancelled"),
+        (
+            "SAVED_SERVICE_UNAVAILABLE",
+            "Saved Service Unavailable",
+        ),
     ]
 
     id = models.UUIDField(
@@ -258,16 +274,28 @@ class Notification(models.Model):
         blank=True,
     )
 
+    service = models.ForeignKey(
+        Service,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+        null=True,
+        blank=True,
+    )
+
     notification_type = models.CharField(
-        max_length=30,
+        max_length=40,
         choices=NOTIFICATION_TYPE_CHOICES,
     )
 
     message = models.TextField()
 
-    is_read = models.BooleanField(default=False)
+    is_read = models.BooleanField(
+        default=False,
+    )
 
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
 
     class Meta:
         constraints = [
@@ -278,7 +306,18 @@ class Notification(models.Model):
                     "notification_type",
                 ],
                 name="unique_notification_per_booking_type",
-            )
+            ),
+            models.UniqueConstraint(
+                fields=[
+                    "recipient",
+                    "service",
+                    "notification_type",
+                ],
+                condition=models.Q(
+                    service__isnull=False,
+                ),
+                name="unique_notification_per_service_type",
+            ),
         ]
 
     def __str__(self):
@@ -286,7 +325,6 @@ class Notification(models.Model):
             f"{self.notification_type} - "
             f"{self.recipient.username}"
         )
-
 
 class UserProfile(models.Model):
     user = models.OneToOneField(
@@ -348,4 +386,54 @@ class BookingIdempotencyKey(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.user.username} - {self.key}"   
+        return f"{self.user.username} - {self.key}"
+class SavedService(models.Model):
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+    )
+
+    customer = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="saved_services",
+    )
+
+    service = models.ForeignKey(
+        Service,
+        on_delete=models.CASCADE,
+        related_name="saved_by_customers",
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "customer",
+                    "service",
+                ],
+                name="unique_saved_service",
+            ),
+        ]
+
+        indexes = [
+            models.Index(
+                fields=[
+                    "customer",
+                    "-created_at",
+                ],
+                name="saved_service_customer_created",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.customer.username} - "
+            f"{self.service.name}"
+        )                        
+    

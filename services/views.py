@@ -20,8 +20,16 @@ from .models import (
     Service,
     ServiceImage,
     UserProfile,
+    SavedService,
 )
 from .pagination import ServicePagination
+from .permissions import IsCustomer
+
+from .booking_service import (
+    create_booking,
+    cancel_booking,
+    update_booking_status,
+)
 from .serializers import (
     BookingSerializer,
     BookingStatusSerializer,
@@ -33,12 +41,9 @@ from .serializers import (
     ProfileImageSerializer,
     RegisterSerializer,
     ServiceImageSerializer,
+    ServiceListSerializer,
     ServiceSerializer,
-)
-from .booking_service import (
-    create_booking,
-    cancel_booking,
-    update_booking_status,
+    SavedServiceSerializer,
 )
 from .payment_service import (
     initiate_payment,
@@ -50,7 +55,13 @@ from .service_service import (
     update_service,
     delete_service,
 )
-
+from .saved_service_service import (
+    SavedServiceAlreadyExists,
+    ServiceNotFound,
+    delete_saved_service,
+    list_saved_services,
+    save_service,
+)
 
 def build_api_error_response(
     message,
@@ -144,6 +155,12 @@ class ServiceListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     pagination_class = ServicePagination
 
+    def get_serializer_class(self):
+        if self.request.method == "GET":
+            return ServiceListSerializer
+
+        return ServiceSerializer
+
     def list(self, request, *args, **kwargs):
         """
         Return cached Service List API response when available.
@@ -162,12 +179,13 @@ class ServiceListCreateView(generics.ListCreateAPIView):
         )
 
         cache.set(
-    cache_key,
-    response.data,
-    settings.SERVICE_LIST_CACHE_TIMEOUT,
-)
+            cache_key,
+            response.data,
+            settings.SERVICE_LIST_CACHE_TIMEOUT,
+        )
 
         return response
+    
 
     def get_queryset(self):
         queryset = Service.objects.select_related(
@@ -1008,3 +1026,90 @@ class NotificationListView(
     ).filter(
         recipient=self.request.user
     ).order_by("-id")
+class SavedServiceListCreateView(APIView):
+    permission_classes = [
+        IsAuthenticated,
+        IsCustomer,
+    ]
+
+    def get(self, request):
+        saved_services = list_saved_services(
+            customer=request.user,
+        )
+
+        serializer = SavedServiceSerializer(
+            saved_services,
+            many=True,
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = SavedServiceSerializer(
+            data=request.data,
+        )
+
+        serializer.is_valid(
+            raise_exception=True,
+        )
+
+        service = serializer.validated_data["service"]
+
+        try:
+            saved_service = save_service(
+                customer=request.user,
+                service=service,
+            )
+
+        except ServiceNotFound:
+            return build_api_error_response(
+                message="Service not found.",
+                error_code="SERVICE_NOT_FOUND",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        except SavedServiceAlreadyExists:
+            return build_api_error_response(
+                message="Service has already been saved.",
+                error_code="ALREADY_SAVED",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        response_serializer = SavedServiceSerializer(
+            saved_service,
+        )
+
+        return Response(
+            response_serializer.data,
+            status=status.HTTP_201_CREATED,
+        )
+class SavedServiceDeleteView(APIView):
+    permission_classes = [
+        IsAuthenticated,
+    ]
+
+    def delete(
+        self,
+        request,
+        pk,
+    ):
+        deleted = delete_saved_service(
+            customer=request.user,
+            saved_service_id=pk,
+        )
+
+        if not deleted:
+            return build_api_error_response(
+                message="Saved service not found.",
+                error_code="NOT_FOUND",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+

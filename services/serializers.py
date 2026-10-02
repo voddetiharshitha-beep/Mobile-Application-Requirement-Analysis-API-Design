@@ -14,6 +14,7 @@ from .models import (
  Booking,
     Payment,
     Provider,
+     SavedService,
     Service,
     ServiceImage,
     UserProfile,
@@ -231,7 +232,23 @@ class ServiceSerializer(
             "created_at",
             "updated_at",
         ]
+class ServiceListSerializer(
+    serializers.ModelSerializer
+):
+    class Meta:
+        model = Service
 
+        fields = [
+            "id",
+            "name",
+            "location",
+            "price",
+            "status",
+            "category",
+            "provider",
+        ]
+
+        read_only_fields = fields
 
 class BookingSerializer(
     StrictModelSerializer
@@ -1016,3 +1033,31 @@ class ProfileSerializer(
         read_only_fields = [
             "username",
         ]
+class SavedServiceSerializer(serializers.ModelSerializer):
+    service_name = serializers.CharField(
+        source="service.name",
+        read_only=True,
+    )
+
+    class Meta:
+        model = SavedService
+
+        fields = [
+            "id",
+            "service",
+            "service_name",
+            "created_at",
+        ]
+
+        read_only_fields = [
+            "id",
+            "service_name",
+            "created_at",
+        ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+
+        data["service"] = str(instance.service_id)
+
+        return data

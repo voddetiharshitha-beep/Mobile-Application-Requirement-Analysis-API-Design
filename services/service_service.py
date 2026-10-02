@@ -1,5 +1,10 @@
 from django.core.cache import cache
 
+from .notification_service import (
+    send_saved_service_unavailable_notification,
+)
+from .tasks import notify_saved_customers_service_unavailable
+
 
 def clear_service_list_cache():
     """
@@ -29,11 +34,25 @@ def create_service(*, serializer, provider):
 def update_service(*, serializer):
     """
     Update an existing service.
+
+    If the service changes from available to unavailable,
+    queue a Celery task to notify customers who saved it.
     """
+
+    service = serializer.instance
+
+    was_available = service.status
 
     service = serializer.save()
 
+    is_available = service.status
+
     clear_service_list_cache()
+
+    if was_available and not is_available:
+        notify_saved_customers_service_unavailable.delay(
+            str(service.id)
+        )
 
     return service
 

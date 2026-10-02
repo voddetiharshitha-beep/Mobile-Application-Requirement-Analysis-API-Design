@@ -53,4 +53,9 @@ urlpatterns = [
     PasswordChangeView.as_view(),
     name="password-change",
   ),
+     
+     path(
+    "api/v1/saved-services/",
+    include("services.saved_service_urls"),
+),
 ]

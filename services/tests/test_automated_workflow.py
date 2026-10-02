@@ -336,3 +336,4 @@ class AutomatedWorkflowTests(TransactionTestCase):
             ).count(),
             1,
         )
+        
