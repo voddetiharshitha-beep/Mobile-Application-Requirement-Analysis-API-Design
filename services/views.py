@@ -1,6 +1,7 @@
 from django.contrib.auth.password_validation import validate_password
 from django.conf import settings
 from django.core.cache import cache
+
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -8,6 +9,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
+
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -22,6 +24,7 @@ from .models import (
     UserProfile,
     SavedService,
 )
+
 from .pagination import ServicePagination
 from .permissions import IsCustomer
 
@@ -30,6 +33,7 @@ from .booking_service import (
     cancel_booking,
     update_booking_status,
 )
+
 from .serializers import (
     BookingSerializer,
     BookingStatusSerializer,
@@ -45,16 +49,21 @@ from .serializers import (
     ServiceSerializer,
     SavedServiceSerializer,
 )
+
 from .payment_service import (
     initiate_payment,
     process_payment,
     process_payment_webhook,
 )
+
+from .stripe_service import StripeIntegrationError
+
 from .service_service import (
     create_service,
     update_service,
     delete_service,
 )
+
 from .saved_service_service import (
     SavedServiceAlreadyExists,
     ServiceNotFound,
@@ -62,6 +71,7 @@ from .saved_service_service import (
     list_saved_services,
     save_service,
 )
+
 
 def build_api_error_response(
     message,
@@ -78,15 +88,19 @@ def build_api_error_response(
         },
         status=status_code,
     )
+
+
 class LoginView(TokenObtainPairView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "login"
+
 
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "registration"
+
 
 class PasswordChangeView(APIView):
     permission_classes = [IsAuthenticated]
@@ -104,6 +118,7 @@ class PasswordChangeView(APIView):
         request.user.set_password(
             serializer.validated_data["new_password"]
         )
+
         request.user.save(
             update_fields=["password"]
         )
@@ -117,6 +132,8 @@ class PasswordChangeView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -150,6 +167,8 @@ class LogoutView(APIView):
                 error_code="INVALID_REFRESH_TOKEN",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
+
+
 class ServiceListCreateView(generics.ListCreateAPIView):
     serializer_class = ServiceSerializer
     permission_classes = [IsAuthenticated]
@@ -165,6 +184,7 @@ class ServiceListCreateView(generics.ListCreateAPIView):
         """
         Return cached Service List API response when available.
         """
+
         cache_key = f"service_list:{request.get_full_path()}"
 
         cached_data = cache.get(cache_key)
@@ -185,7 +205,6 @@ class ServiceListCreateView(generics.ListCreateAPIView):
         )
 
         return response
-    
 
     def get_queryset(self):
         queryset = Service.objects.select_related(
@@ -346,6 +365,7 @@ class ServiceDetailView(
             status=status.HTTP_204_NO_CONTENT
         )
 
+
 class BookingListCreateView(
     generics.ListCreateAPIView
 ):
@@ -354,6 +374,7 @@ class BookingListCreateView(
     pagination_class = ServicePagination
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "booking"
+
     def create(
         self,
         request,
@@ -490,13 +511,13 @@ class BookingCancelView(
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-      return Booking.objects.select_related(
-        "customer",
-        "provider",
-        "service",
-    ).filter(
-        customer=self.request.user
-    )
+        return Booking.objects.select_related(
+            "customer",
+            "provider",
+            "service",
+        ).filter(
+            customer=self.request.user
+        )
 
     def post(self, request, *args, **kwargs):
         booking = self.get_object()
@@ -505,6 +526,7 @@ class BookingCancelView(
             booking = cancel_booking(
                 booking=booking
             )
+
         except ValueError as exc:
             if booking.status == "cancelled":
                 return build_api_error_response(
@@ -588,6 +610,7 @@ class PaymentInitiateView(
     permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "payment"
+
     def create(
         self,
         request,
@@ -607,40 +630,50 @@ class PaymentInitiateView(
 
         payment = serializer.save()
 
-        payment = initiate_payment(
-            payment=payment
-        )
+        try:
+            payment = initiate_payment(
+                payment=payment
+            )
+
+        except StripeIntegrationError:
+            return build_api_error_response(
+                message=(
+                    "The external payment service is "
+                    "temporarily unavailable."
+                ),
+                error_code="PAYMENT_SERVICE_UNAVAILABLE",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+            )
 
         return Response(
-    {
-        "success": True,
-        "message": (
-            "Payment initiated successfully."
-        ),
-        "data": {
-            "id": str(payment.id),
-            "booking": str(
-                payment.booking.id
-            ),
-            "amount": str(
-                payment.amount
-            ),
-            "transaction_id": (
-                payment.transaction_id
-            ),
-            "payment_status": (
-                payment.payment_status
-            ),
-            "payment_method": (
-                payment.payment_method
-            ),
-            "created_at": (
-                payment.created_at
-            ),
-        },
-    },
-    status=status.HTTP_201_CREATED,
-)
+            {
+                "success": True,
+                "message": "Payment initiated successfully.",
+                "error_code": None,
+                "data": {
+                    "id": str(payment.id),
+                    "booking": str(
+                        payment.booking.id
+                    ),
+                    "amount": str(
+                        payment.amount
+                    ),
+                    "transaction_id": (
+                        payment.transaction_id
+                    ),
+                    "payment_status": (
+                        payment.payment_status
+                    ),
+                    "payment_method": (
+                        payment.payment_method
+                    ),
+                    "created_at": (
+                        payment.created_at
+                    ),
+                },
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class PaymentProcessView(
@@ -650,6 +683,7 @@ class PaymentProcessView(
     permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "payment"
+
     def post(
         self,
         request,
@@ -671,6 +705,7 @@ class PaymentProcessView(
             ).get(
                 id=pk
             )
+
         except Payment.DoesNotExist:
             return build_api_error_response(
                 "Payment does not exist.",
@@ -739,6 +774,7 @@ class PaymentWebhookView(
     permission_classes = []
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "payment"
+
     def post(
         self,
         request,
@@ -781,22 +817,22 @@ class PaymentWebhookView(
         )
 
         return Response(
-    {
-        "success": True,
-        "message": (
-            "Payment webhook processed successfully."
-        ),
-        "data": {
-            "payment_id": str(
-                payment.id
-            ),
-            "payment_status": (
-                payment.payment_status
-            ),
-        },
-    },
-    status=status.HTTP_200_OK,
-)
+            {
+                "success": True,
+                "message": (
+                    "Payment webhook processed successfully."
+                ),
+                "data": {
+                    "payment_id": str(
+                        payment.id
+                    ),
+                    "payment_status": (
+                        payment.payment_status
+                    ),
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class ProfileImageUploadView(
@@ -804,6 +840,7 @@ class ProfileImageUploadView(
 ):
     serializer_class = ProfileImageSerializer
     permission_classes = [IsAuthenticated]
+
     parser_classes = [
         MultiPartParser,
         FormParser,
@@ -854,6 +891,7 @@ class ProfileImageUploadView(
 
 class ServiceImageListCreateView(APIView):
     permission_classes = [IsAuthenticated]
+
     parser_classes = [
         MultiPartParser,
         FormParser,
@@ -923,10 +961,7 @@ class ServiceImageListCreateView(APIView):
                 status.HTTP_404_NOT_FOUND,
             )
 
-        if (
-            service.provider.user
-            != request.user
-        ):
+        if service.provider.user != request.user:
             return build_api_error_response(
                 "You can only upload images for your own service.",
                 "PERMISSION_DENIED",
@@ -985,10 +1020,7 @@ class ServiceImageDeleteView(APIView):
                 status.HTTP_404_NOT_FOUND,
             )
 
-        if (
-            service.provider.user
-            != request.user
-        ):
+        if service.provider.user != request.user:
             return build_api_error_response(
                 "You can only delete images from your own service.",
                 "PERMISSION_DENIED",
@@ -1021,11 +1053,13 @@ class NotificationListView(
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-     return Notification.objects.select_related(
-        "booking",
-    ).filter(
-        recipient=self.request.user
-    ).order_by("-id")
+        return Notification.objects.select_related(
+            "booking",
+        ).filter(
+            recipient=self.request.user
+        ).order_by("-id")
+
+
 class SavedServiceListCreateView(APIView):
     permission_classes = [
         IsAuthenticated,
@@ -1056,7 +1090,9 @@ class SavedServiceListCreateView(APIView):
             raise_exception=True,
         )
 
-        service = serializer.validated_data["service"]
+        service = serializer.validated_data[
+            "service"
+        ]
 
         try:
             saved_service = save_service(
@@ -1086,6 +1122,8 @@ class SavedServiceListCreateView(APIView):
             response_serializer.data,
             status=status.HTTP_201_CREATED,
         )
+
+
 class SavedServiceDeleteView(APIView):
     permission_classes = [
         IsAuthenticated,
@@ -1111,5 +1149,3 @@ class SavedServiceDeleteView(APIView):
         return Response(
             status=status.HTTP_204_NO_CONTENT,
         )
-
-

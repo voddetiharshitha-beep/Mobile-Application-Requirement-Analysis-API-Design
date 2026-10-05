@@ -1,7 +1,7 @@
-
 from datetime import date, timedelta
 from decimal import Decimal
 import secrets
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.test import TransactionTestCase, override_settings
@@ -15,6 +15,7 @@ from services.models import (
     Provider,
     Service,
 )
+from services.stripe_service import StripeIntegrationError
 
 
 class PaymentJourneyTests(TransactionTestCase):
@@ -84,7 +85,28 @@ class PaymentJourneyTests(TransactionTestCase):
             user=self.customer
         )
 
-    def test_customer_can_initiate_payment(self):
+    @patch(
+        "services.payment_service.create_payment_intent"
+    )
+    def test_customer_can_initiate_payment(
+        self,
+        mock_create_payment_intent,
+    ):
+        """
+        Verify that a customer can initiate a Stripe payment.
+
+        The external Stripe API is mocked so this automated test
+        does not depend on network connectivity or a real Stripe
+        request.
+        """
+
+        mock_create_payment_intent.return_value = {
+            "id": "pi_test_123456789",
+            "status": "requires_payment_method",
+            "amount": 50000,
+            "currency": "inr",
+        }
+
         response = self.client.post(
             "/api/v1/services/payments/initiate/",
             {
@@ -94,7 +116,10 @@ class PaymentJourneyTests(TransactionTestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            response.status_code,
+            201,
+        )
 
         payment = Payment.objects.get(
             booking=self.booking
@@ -112,11 +137,32 @@ class PaymentJourneyTests(TransactionTestCase):
 
         self.assertEqual(
             payment.payment_method,
-            "MOCK",
+            "STRIPE",
+        )
+
+        self.assertEqual(
+            payment.transaction_id,
+            "pi_test_123456789",
+        )
+
+        mock_create_payment_intent.assert_called_once()
+
+        call_kwargs = (
+            mock_create_payment_intent.call_args.kwargs
+        )
+
+        self.assertEqual(
+            call_kwargs["amount"],
+            payment.amount,
+        )
+
+        self.assertEqual(
+            call_kwargs["currency"],
+            "inr",
         )
 
         self.assertTrue(
-            payment.transaction_id.startswith("MOCK-")
+            call_kwargs["idempotency_key"]
         )
 
     def test_customer_can_process_successful_payment(self):
@@ -136,7 +182,10 @@ class PaymentJourneyTests(TransactionTestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.status_code,
+            200,
+        )
 
         payment.refresh_from_db()
 
@@ -249,17 +298,21 @@ class PaymentJourneyTests(TransactionTestCase):
             "confirmed",
         )
 
-        payment_notification = Notification.objects.filter(
-            recipient=self.customer,
-            booking=self.booking,
-            notification_type="PAYMENT_SUCCESSFUL",
-        ).first()
+        payment_notification = (
+            Notification.objects.filter(
+                recipient=self.customer,
+                booking=self.booking,
+                notification_type="PAYMENT_SUCCESSFUL",
+            ).first()
+        )
 
-        confirmed_notification = Notification.objects.filter(
-            recipient=self.customer,
-            booking=self.booking,
-            notification_type="BOOKING_CONFIRMED",
-        ).first()
+        confirmed_notification = (
+            Notification.objects.filter(
+                recipient=self.customer,
+                booking=self.booking,
+                notification_type="BOOKING_CONFIRMED",
+            ).first()
+        )
 
         self.assertIsNotNone(
             payment_notification
@@ -269,3 +322,61 @@ class PaymentJourneyTests(TransactionTestCase):
             confirmed_notification
         )
 
+    @patch(
+        "services.payment_service.create_payment_intent"
+    )
+    def test_payment_initiation_returns_502_when_stripe_fails(
+        self,
+        mock_create_payment_intent,
+    ):
+        """
+        Verify that an external Stripe failure is converted
+        into a safe HTTP 502 response.
+
+        The internal Stripe error must not be exposed to the
+        API client.
+        """
+
+        mock_create_payment_intent.side_effect = (
+            StripeIntegrationError(
+                "Internal Stripe failure that must not be exposed."
+            )
+        )
+
+        response = self.client.post(
+            "/api/v1/services/payments/initiate/",
+            {
+                "booking": str(self.booking.id),
+                "amount": "500.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            502,
+        )
+
+        self.assertFalse(
+            response.data["success"]
+        )
+
+        self.assertEqual(
+            response.data["error_code"],
+            "PAYMENT_SERVICE_UNAVAILABLE",
+        )
+
+        self.assertEqual(
+            response.data["message"],
+            "The external payment service is temporarily unavailable.",
+        )
+
+        self.assertNotIn(
+            "Internal Stripe failure",
+            str(response.data),
+        )
+
+        self.assertNotIn(
+            "sk_test_",
+            str(response.data),
+        )

@@ -1,28 +1,54 @@
-from uuid import uuid4
+import logging
+import uuid
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.db import transaction
 
 from .notification_service import send_notification
+from .stripe_service import (
+    StripeIntegrationError,
+    create_payment_intent,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 def initiate_payment(*, payment):
     """
-    Prepare a mock payment.
+    Create a Stripe test-mode PaymentIntent for the payment.
 
     Business rules:
-    - Generate a mock transaction ID.
+    - Payment amount comes from the validated Payment record.
+    - Stripe receives the amount in the smallest currency unit.
+    - The Stripe PaymentIntent ID is stored as transaction_id.
     - Payment starts in PENDING state.
-    - Payment method is MOCK.
+    - Payment method is STRIPE.
     """
 
-    payment.transaction_id = (
-        f"MOCK-{uuid4().hex[:12].upper()}"
-    )
+    idempotency_key = f"payment-{payment.id}"
 
+    try:
+        stripe_payment = create_payment_intent(
+            amount=payment.amount,
+            currency="inr",
+            idempotency_key=idempotency_key,
+        )
+
+    except StripeIntegrationError:
+        logger.exception(
+            "Stripe payment initiation failed.",
+            extra={
+                "payment_id": str(payment.id),
+            },
+        )
+
+        raise
+
+    payment.transaction_id = stripe_payment["id"]
     payment.payment_status = "PENDING"
-    payment.payment_method = "MOCK"
+    payment.payment_method = "STRIPE"
 
     payment.save(
         update_fields=[
@@ -37,13 +63,13 @@ def initiate_payment(*, payment):
 
 def process_payment(*, payment, payment_result):
     """
-    Process a mock payment result.
+    Process a payment result.
 
     The serializer/view is responsible for checking:
     - the payment belongs to the current user
     - the payment is currently pending
 
-    This service only applies the payment result.
+    This service applies the payment result.
     """
 
     payment.payment_status = payment_result

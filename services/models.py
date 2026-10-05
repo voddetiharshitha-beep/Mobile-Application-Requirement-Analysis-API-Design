@@ -197,8 +197,9 @@ class Payment(models.Model):
     ]
 
     PAYMENT_METHOD_CHOICES = [
-        ("MOCK", "Mock Payment"),
-    ]
+    ("MOCK", "Mock Payment"),
+    ("STRIPE", "Stripe"),
+]
 
     id = models.UUIDField(
         primary_key=True,
