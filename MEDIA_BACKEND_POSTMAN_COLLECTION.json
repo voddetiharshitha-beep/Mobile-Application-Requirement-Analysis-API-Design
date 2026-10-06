@@ -1,0 +1,213 @@
+{
+  "info": {
+    "_postman_id": "8e4d2d5a-4c3b-4e8b-a4d8-7c6a9f2b1e11",
+    "name": "Advanced File Storage & Media Processing",
+    "description": "Postman collection for testing profile image uploads, service image management, secure public/private media downloads, and media validation.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    },
+    {
+      "key": "service_id",
+      "value": ""
+    },
+    {
+      "key": "service_image_id",
+      "value": ""
+    },
+    {
+      "key": "media_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Profile Image",
+      "item": [
+        {
+          "name": "Upload Profile Image",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/profile/image/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "profile",
+                "image"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Service Images",
+      "item": [
+        {
+          "name": "Upload Service Image",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/services/{{service_id}}/images/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services",
+                "{{service_id}}",
+                "images"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Service Images",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/services/{{service_id}}/images/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services",
+                "{{service_id}}",
+                "images"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Service Image",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/services/{{service_id}}/images/{{service_image_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services",
+                "{{service_id}}",
+                "images",
+                "{{service_image_id}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Media Download",
+      "item": [
+        {
+          "name": "Download Public or Owned Private Media",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/services/media/{{media_id}}/download/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services",
+                "media",
+                "{{media_id}}",
+                "download"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Download Public Media Anonymously",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/services/media/{{media_id}}/download/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services",
+                "media",
+                "{{media_id}}",
+                "download"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
