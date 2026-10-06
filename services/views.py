@@ -1,6 +1,7 @@
 from django.contrib.auth.password_validation import validate_password
 from django.conf import settings
 from django.core.cache import cache
+from django.http import FileResponse
 
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied
@@ -16,6 +17,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .models import (
     Booking,
+    Media,
     Notification,
     Payment,
     Provider,
@@ -72,6 +74,7 @@ from .saved_service_service import (
     save_service,
 )
 
+from .media_service import get_media_for_access
 
 def build_api_error_response(
     message,
@@ -1149,3 +1152,63 @@ class SavedServiceDeleteView(APIView):
         return Response(
             status=status.HTTP_204_NO_CONTENT,
         )
+class MediaDownloadView(APIView):
+    """
+    Securely download media files.
+
+    PUBLIC media:
+        Accessible to everyone.
+
+    PRIVATE media:
+        Accessible only to the media owner.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(
+        self,
+        request,
+        media_id,
+    ):
+        media = get_media_for_access(
+            media_id=media_id,
+            user=request.user,
+        )
+
+        if media is None:
+            return build_api_error_response(
+                "Media not found or access denied.",
+                "MEDIA_NOT_FOUND_OR_FORBIDDEN",
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            media_file = media.file.open(
+                "rb"
+            )
+
+        except (
+            FileNotFoundError,
+            ValueError,
+        ):
+            return build_api_error_response(
+                "Media file is not available.",
+                "MEDIA_FILE_NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        response = FileResponse(
+            media_file,
+            content_type=(
+                media.mime_type
+                or "application/octet-stream"
+            ),
+        )
+
+        response[
+            "Content-Disposition"
+        ] = (
+            "attachment; "
+            f'filename="{media.original_filename}"'
+        )
+        return response

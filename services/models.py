@@ -2,7 +2,10 @@ import uuid
 
 from django.contrib.auth.models import User
 from django.db import models
-
+from .validators import (
+    generate_safe_media_filename,
+    validate_uploaded_image,
+)
 
 class Category(models.Model):
     id = models.UUIDField(
@@ -335,6 +338,7 @@ class UserProfile(models.Model):
     )
     image = models.ImageField(
         upload_to="profile_images/",
+        validators=[validate_uploaded_image],
         null=True,
         blank=True,
     )
@@ -351,7 +355,10 @@ class ServiceImage(models.Model):
         on_delete=models.CASCADE,
         related_name="images",
     )
-    image = models.ImageField(upload_to="service_images/")
+    image = models.ImageField(
+        upload_to="service_images/",
+        validators=[validate_uploaded_image],
+    )
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -437,4 +444,82 @@ class SavedService(models.Model):
             f"{self.customer.username} - "
             f"{self.service.name}"
         )                        
-    
+class Media(models.Model):
+    MEDIA_TYPE_CHOICES = [
+        ("PROFILE", "Profile"),
+        ("SERVICE", "Service"),
+    ]
+
+    VISIBILITY_CHOICES = [
+        ("PUBLIC", "Public"),
+        ("PRIVATE", "Private"),
+    ]
+
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+    )
+
+    owner = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="media",
+    )
+
+    service = models.ForeignKey(
+        Service,
+        on_delete=models.CASCADE,
+        related_name="media",
+        null=True,
+        blank=True,
+    )
+
+    file = models.ImageField(
+        upload_to=generate_safe_media_filename,
+        validators=[validate_uploaded_image],
+    )
+
+    media_type = models.CharField(
+        max_length=20,
+        choices=MEDIA_TYPE_CHOICES,
+    )
+
+    visibility = models.CharField(
+        max_length=20,
+        choices=VISIBILITY_CHOICES,
+        default="PRIVATE",
+    )
+
+    original_filename = models.CharField(
+        max_length=255,
+    )
+
+    mime_type = models.CharField(
+        max_length=100,
+    )
+
+    file_size = models.PositiveBigIntegerField()
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    updated_at = models.DateTimeField(
+        auto_now=True,
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["owner", "media_type"],
+                name="media_owner_type_idx",
+            ),
+            models.Index(
+                fields=["service", "visibility"],
+                name="media_service_visibility_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return self.original_filename

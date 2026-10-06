@@ -8,3 +8,4 @@ db.sqlite3
 profile_images/
 service_images/
 db_sqlite_backup.sqlite3
+media/
