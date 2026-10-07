@@ -24,6 +24,10 @@ urlpatterns = [
         include("services.booking_urls"),
     ),
     path(
+    "api/v1/sync/",
+    include("services.sync_urls"),
+),
+    path(
         "api/v1/profile/image/",
         ProfileImageUploadView.as_view(),
         name="profile-image-upload",

@@ -1,3 +1,4 @@
+
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from decimal import Decimal
@@ -123,7 +124,8 @@ class AutomatedWorkflowTests(TransactionTestCase):
         """
         Duplicate request case:
 
-        Two booking requests use the same Idempotency-Key.
+        Two booking requests use the same
+        Idempotency-Key and the same request payload.
 
         The second request must return the original
         booking instead of creating a new booking.
@@ -168,15 +170,14 @@ class AutomatedWorkflowTests(TransactionTestCase):
             self.booking_date,
         )
 
-        # Use a different booking date for the second
-        # request. The Idempotency-Key must still cause
-        # the original booking to be returned.
+        # Retry using the exact same payload
+        # and the exact same Idempotency-Key.
         second_payload = {
             "service": str(self.service.id),
             "booking_date": (
-                self.booking_date + timedelta(days=1)
-            ).isoformat(),
-            "booking_time": "11:00:00",
+                self.booking_date.isoformat()
+            ),
+            "booking_time": self.booking_time,
         }
 
         second_response = client.post(
@@ -184,6 +185,14 @@ class AutomatedWorkflowTests(TransactionTestCase):
             second_payload,
             format="json",
             HTTP_IDEMPOTENCY_KEY=idempotency_key,
+        )
+        print(
+            "SECOND RESPONSE STATUS:",
+            second_response.status_code,
+        )
+        print(
+            "SECOND RESPONSE DATA:",
+            second_response.data,
         )
 
         self.assertEqual(
@@ -210,7 +219,8 @@ class AutomatedWorkflowTests(TransactionTestCase):
             1,
         )
 
-        # Only one idempotency record must exist.
+        # Only one legacy booking idempotency record
+        # must exist.
         self.assertEqual(
             BookingIdempotencyKey.objects.filter(
                 user=self.customer,
@@ -220,8 +230,8 @@ class AutomatedWorkflowTests(TransactionTestCase):
         )
 
         # Confirm that the original booking data was
-        # preserved and the second request did not
-        # create or modify the booking.
+        # preserved and the retry did not create or
+        # modify the booking.
         booking = Booking.objects.get(
             id=first_booking_id
         )
@@ -301,26 +311,45 @@ class AutomatedWorkflowTests(TransactionTestCase):
             for result in results
         ]
 
-        booking_ids = [
-            result[1]["data"]["id"]
-            for result in results
-        ]
-
+        # At least one request must successfully
+        # create the booking.
         self.assertIn(
             201,
             status_codes,
         )
 
-        self.assertIn(
-            200,
-            status_codes,
+        # The other request must either receive the
+        # stored response or be reported as currently
+        # processing.
+        self.assertTrue(
+            all(
+                status_code in {200, 201, 409}
+                for status_code in status_codes
+            )
         )
+
+        successful_results = [
+            result
+            for result in results
+            if result[0] in {200, 201}
+        ]
+
+        self.assertGreaterEqual(
+            len(successful_results),
+            1,
+        )
+
+        booking_ids = [
+            result[1]["data"]["id"]
+            for result in successful_results
+        ]
 
         self.assertEqual(
-            booking_ids[0],
-            booking_ids[1],
+            len(set(booking_ids)),
+            1,
         )
 
+        # Only one booking must exist.
         self.assertEqual(
             Booking.objects.filter(
                 customer=self.customer,
@@ -329,6 +358,8 @@ class AutomatedWorkflowTests(TransactionTestCase):
             1,
         )
 
+        # Only one legacy booking idempotency record
+        # must exist.
         self.assertEqual(
             BookingIdempotencyKey.objects.filter(
                 user=self.customer,
@@ -336,4 +367,4 @@ class AutomatedWorkflowTests(TransactionTestCase):
             ).count(),
             1,
         )
-        
+

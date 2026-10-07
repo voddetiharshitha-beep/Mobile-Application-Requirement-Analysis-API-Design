@@ -222,9 +222,11 @@ class Payment(models.Model):
     )
 
     transaction_id = models.CharField(
-        max_length=100,
-        unique=True,
-    )
+    max_length=100,
+    unique=True,
+    default=uuid.uuid4,
+    editable=False,
+)
 
     payment_status = models.CharField(
         max_length=20,
@@ -300,6 +302,13 @@ class Notification(models.Model):
     created_at = models.DateTimeField(
         auto_now_add=True,
     )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+    )
+
+    version = models.PositiveIntegerField(
+        default=1,
+    )
 
     class Meta:
         constraints = [
@@ -363,7 +372,7 @@ class ServiceImage(models.Model):
 
     def __str__(self):
         return f"Image for {self.service.name}"
-    
+
 class BookingIdempotencyKey(models.Model):
     user = models.ForeignKey(
         User,
@@ -443,7 +452,7 @@ class SavedService(models.Model):
         return (
             f"{self.customer.username} - "
             f"{self.service.name}"
-        )                        
+        )
 class Media(models.Model):
     MEDIA_TYPE_CHOICES = [
         ("PROFILE", "Profile"),
@@ -523,3 +532,102 @@ class Media(models.Model):
 
     def __str__(self):
         return self.original_filename
+class IdempotencyRecord(models.Model):
+    STATUS_CHOICES = [
+        ("PROCESSING", "Processing"),
+        ("COMPLETED", "Completed"),
+        ("FAILED", "Failed"),
+    ]
+
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+    )
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="idempotency_records",
+    )
+
+    key = models.CharField(
+        max_length=100,
+    )
+
+    operation = models.CharField(
+        max_length=100,
+    )
+
+    request_hash = models.CharField(
+        max_length=64,
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="PROCESSING",
+    )
+
+    response_status = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+    )
+
+    response_body = models.JSONField(
+        null=True,
+        blank=True,
+    )
+
+    resource_type = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+    )
+
+    resource_id = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "user",
+                    "key",
+                    "operation",
+                ],
+                name="unique_idempotency_record_per_operation",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=[
+                    "user",
+                    "key",
+                    "operation",
+                ],
+                name="idempotency_lookup_idx",
+            ),
+            models.Index(
+                fields=[
+                    "expires_at",
+                ],
+                name="idempotency_expiry_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.user.username} - "
+            f"{self.operation} - "
+            f"{self.key}"
+        )

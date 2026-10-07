@@ -301,7 +301,7 @@ def main():
             name="3. Booking History",
             client=client,
             method="GET",
-            url="/api/v1/bookings/?page=1",
+            url="/api/v1/bookings/",
         )
     )
 

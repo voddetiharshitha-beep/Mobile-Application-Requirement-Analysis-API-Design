@@ -1,5 +1,5 @@
-from django.contrib.auth.password_validation import validate_password
 from django.conf import settings
+from django.contrib.auth.password_validation import validate_password
 from django.core.cache import cache
 from django.http import FileResponse
 
@@ -21,18 +21,19 @@ from .models import (
     Notification,
     Payment,
     Provider,
+    SavedService,
     Service,
     ServiceImage,
     UserProfile,
-    SavedService,
 )
 
 from .pagination import ServicePagination
+from .sync_pagination import SyncCursorPagination
 from .permissions import IsCustomer
 
 from .booking_service import (
-    create_booking,
     cancel_booking,
+    create_booking,
     update_booking_status,
 )
 
@@ -46,16 +47,23 @@ from .serializers import (
     PaymentWebhookSerializer,
     ProfileImageSerializer,
     RegisterSerializer,
+    SavedServiceSerializer,
     ServiceImageSerializer,
     ServiceListSerializer,
     ServiceSerializer,
-    SavedServiceSerializer,
 )
 
 from .payment_service import (
     initiate_payment,
     process_payment,
     process_payment_webhook,
+)
+
+from .idempotency_service import (
+    complete_idempotent_request,
+    fail_idempotent_request,
+    get_idempotency_key,
+    start_idempotent_request,
 )
 
 from .stripe_service import StripeIntegrationError
@@ -76,6 +84,7 @@ from .saved_service_service import (
 
 from .media_service import get_media_for_access
 
+
 def build_api_error_response(
     message,
     error_code,
@@ -91,6 +100,11 @@ def build_api_error_response(
         },
         status=status_code,
     )
+
+
+# ============================================================
+# AUTHENTICATION
+# ============================================================
 
 
 class LoginView(TokenObtainPairView):
@@ -116,7 +130,9 @@ class PasswordChangeView(APIView):
             context={"request": request},
         )
 
-        serializer.is_valid(raise_exception=True)
+        serializer.is_valid(
+            raise_exception=True
+        )
 
         request.user.set_password(
             serializer.validated_data["new_password"]
@@ -129,7 +145,9 @@ class PasswordChangeView(APIView):
         return Response(
             {
                 "success": True,
-                "message": "Password changed successfully.",
+                "message": (
+                    "Password changed successfully."
+                ),
                 "error_code": None,
                 "data": None,
             },
@@ -141,7 +159,9 @@ class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        refresh_token = request.data.get("refresh")
+        refresh_token = request.data.get(
+            "refresh"
+        )
 
         if not refresh_token:
             return build_api_error_response(
@@ -151,7 +171,10 @@ class LogoutView(APIView):
             )
 
         try:
-            token = RefreshToken(refresh_token)
+            token = RefreshToken(
+                refresh_token
+            )
+
             token.blacklist()
 
             return Response(
@@ -166,13 +189,23 @@ class LogoutView(APIView):
 
         except TokenError:
             return build_api_error_response(
-                message="Invalid or already blacklisted refresh token.",
+                message=(
+                    "Invalid or already blacklisted "
+                    "refresh token."
+                ),
                 error_code="INVALID_REFRESH_TOKEN",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
 
-class ServiceListCreateView(generics.ListCreateAPIView):
+# ============================================================
+# SERVICES
+# ============================================================
+
+
+class ServiceListCreateView(
+    generics.ListCreateAPIView
+):
     serializer_class = ServiceSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = ServicePagination
@@ -183,17 +216,29 @@ class ServiceListCreateView(generics.ListCreateAPIView):
 
         return ServiceSerializer
 
-    def list(self, request, *args, **kwargs):
+    def list(
+        self,
+        request,
+        *args,
+        **kwargs,
+    ):
         """
-        Return cached Service List API response when available.
+        Return cached Service List API response
+        when available.
         """
 
-        cache_key = f"service_list:{request.get_full_path()}"
+        cache_key = (
+            f"service_list:{request.get_full_path()}"
+        )
 
-        cached_data = cache.get(cache_key)
+        cached_data = cache.get(
+            cache_key
+        )
 
         if cached_data is not None:
-            return Response(cached_data)
+            return Response(
+                cached_data
+            )
 
         response = super().list(
             request,
@@ -210,19 +255,48 @@ class ServiceListCreateView(generics.ListCreateAPIView):
         return response
 
     def get_queryset(self):
-        queryset = Service.objects.select_related(
-            "category",
-            "provider",
-        ).all()
+        queryset = (
+            Service.objects
+            .select_related(
+                "category",
+                "provider",
+            )
+            .all()
+        )
 
-        name = self.request.query_params.get("name")
-        category = self.request.query_params.get("category")
-        provider = self.request.query_params.get("provider")
-        location = self.request.query_params.get("location")
-        price = self.request.query_params.get("price")
-        min_price = self.request.query_params.get("min_price")
-        max_price = self.request.query_params.get("max_price")
-        status_filter = self.request.query_params.get("status")
+        name = self.request.query_params.get(
+            "name"
+        )
+
+        category = self.request.query_params.get(
+            "category"
+        )
+
+        provider = self.request.query_params.get(
+            "provider"
+        )
+
+        location = self.request.query_params.get(
+            "location"
+        )
+
+        price = self.request.query_params.get(
+            "price"
+        )
+
+        min_price = self.request.query_params.get(
+            "min_price"
+        )
+
+        max_price = self.request.query_params.get(
+            "max_price"
+        )
+
+        status_filter = (
+            self.request.query_params.get(
+                "status"
+            )
+        )
 
         if name:
             queryset = queryset.filter(
@@ -261,11 +335,16 @@ class ServiceListCreateView(generics.ListCreateAPIView):
 
         if status_filter:
             queryset = queryset.filter(
-                status=status_filter.lower() == "true"
+                status=(
+                    status_filter.lower()
+                    == "true"
+                )
             )
 
-        ordering = self.request.query_params.get(
-            "ordering"
+        ordering = (
+            self.request.query_params.get(
+                "ordering"
+            )
         )
 
         if ordering in [
@@ -274,18 +353,25 @@ class ServiceListCreateView(generics.ListCreateAPIView):
             "created_at",
             "-created_at",
         ]:
-            queryset = queryset.order_by(ordering)
+            queryset = queryset.order_by(
+                ordering
+            )
 
         return queryset
 
-    def perform_create(self, serializer):
+    def perform_create(
+        self,
+        serializer,
+    ):
         try:
             provider = Provider.objects.get(
                 user=self.request.user
             )
+
         except Provider.DoesNotExist:
             raise PermissionDenied(
-                "Only registered providers can create services."
+                "Only registered providers can "
+                "create services."
             )
 
         create_service(
@@ -314,7 +400,10 @@ class ServiceDetailView(
     ):
         service = self.get_object()
 
-        if service.provider.user != request.user:
+        if (
+            service.provider.user
+            != request.user
+        ):
             return build_api_error_response(
                 "You can only update your own services.",
                 "PERMISSION_DENIED",
@@ -353,7 +442,10 @@ class ServiceDetailView(
     ):
         service = self.get_object()
 
-        if service.provider.user != request.user:
+        if (
+            service.provider.user
+            != request.user
+        ):
             return build_api_error_response(
                 "You can only delete your own services.",
                 "PERMISSION_DENIED",
@@ -369,14 +461,43 @@ class ServiceDetailView(
         )
 
 
+# ============================================================
+# BOOKINGS
+# ============================================================
+
+
 class BookingListCreateView(
     generics.ListCreateAPIView
 ):
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = ServicePagination
+    pagination_class = SyncCursorPagination
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "booking"
+
+    def get_queryset(self):
+        queryset = (
+            Booking.objects
+            .select_related(
+                "customer",
+                "provider",
+                "service",
+            )
+        )
+
+        # Providers can see only bookings assigned
+        # to their own provider account.
+        if Provider.objects.filter(
+            user=self.request.user
+        ).exists():
+            return queryset.filter(
+                provider__user=self.request.user
+            )
+
+        # Customers can see only their own bookings.
+        return queryset.filter(
+            customer=self.request.user
+        )
 
     def create(
         self,
@@ -384,70 +505,200 @@ class BookingListCreateView(
         *args,
         **kwargs,
     ):
-        serializer = self.get_serializer(
-            data=request.data
+        """
+        Create a booking with mobile-safe idempotency.
+
+        The Idempotency-Key is checked BEFORE serializer
+        validation so that a retry receives the original
+        response even when the booking slot is no longer
+        available.
+        """
+
+        idempotency_key = (
+            get_idempotency_key(request)
         )
 
-        serializer.is_valid(
-            raise_exception=True
-        )
+        idempotency_record = None
 
-        self.perform_create(serializer)
+        # ------------------------------------------------
+        # STEP 1:
+        # Check idempotency BEFORE validation.
+        # ------------------------------------------------
+        if idempotency_key:
 
-        if self.booking_created:
-            response_status = status.HTTP_201_CREATED
-            response_message = (
-                "Booking created successfully."
+            (
+                idempotency_record,
+                is_new,
+            ) = start_idempotent_request(
+                user=request.user,
+                key=idempotency_key,
+                operation="create_booking",
+                request_data=request.data,
             )
-        else:
-            response_status = status.HTTP_200_OK
-            response_message = (
-                "Booking request already processed."
+
+            if not is_new:
+
+                # ----------------------------------------
+                # Already completed.
+                # Return the original response.
+                # ----------------------------------------
+                if (
+                    idempotency_record.status
+                    == "COMPLETED"
+                ):
+                    return Response(
+                        idempotency_record.response_body,
+                        status=status.HTTP_200_OK,
+                    )
+
+                # ----------------------------------------
+                # Another request is processing.
+                # ----------------------------------------
+                if (
+                    idempotency_record.status
+                    == "PROCESSING"
+                ):
+                    return Response(
+                        {
+                            "success": False,
+                            "message": (
+                                "This booking request "
+                                "is already being processed. "
+                                "Please retry using the "
+                                "same Idempotency-Key."
+                            ),
+                            "error_code": (
+                                "IDEMPOTENCY_IN_PROGRESS"
+                            ),
+                        },
+                        status=(
+                            status.HTTP_409_CONFLICT
+                        ),
+                    )
+
+                # ----------------------------------------
+                # Previous request failed.
+                # Allow retry.
+                # ----------------------------------------
+                if (
+                    idempotency_record.status
+                    == "FAILED"
+                ):
+                    idempotency_record.status = (
+                        "PROCESSING"
+                    )
+
+                    idempotency_record.response_status = (
+                        None
+                    )
+
+                    idempotency_record.response_body = (
+                        None
+                    )
+
+                    idempotency_record.save(
+                        update_fields=[
+                            "status",
+                            "response_status",
+                            "response_body",
+                        ]
+                    )
+
+        # ------------------------------------------------
+        # STEP 2:
+        # Validate and execute the booking.
+        # ------------------------------------------------
+        try:
+            serializer = self.get_serializer(
+                data=request.data
             )
 
-        return Response(
-            {
+            serializer.is_valid(
+                raise_exception=True
+            )
+
+            self.perform_create(
+                serializer
+            )
+
+            if self.booking_created:
+                response_status = (
+                    status.HTTP_201_CREATED
+                )
+
+                response_message = (
+                    "Booking created successfully."
+                )
+
+            else:
+                response_status = (
+                    status.HTTP_200_OK
+                )
+
+                response_message = (
+                    "Booking request already processed."
+                )
+
+            response_body = {
                 "success": True,
                 "message": response_message,
                 "data": serializer.data,
-            },
-            status=response_status,
-        )
+            }
 
-    def get_queryset(self):
-        queryset = Booking.objects.select_related(
-            "customer",
-            "provider",
-            "service",
-        )
+            # ------------------------------------------------
+            # STEP 3:
+            # Store response for future retries.
+            # ------------------------------------------------
+            if idempotency_record:
 
-        try:
-            provider = self.request.user.provider
-        except Provider.DoesNotExist:
-            provider = None
+                complete_idempotent_request(
+                    record=idempotency_record,
+                    response_status=response_status,
+                    response_body=response_body,
+                    resource_type="booking",
+                    resource_id=str(
+                        serializer.instance.id
+                    ),
+                )
 
-        if provider:
-            return queryset.filter(
-                provider=provider
-            ).order_by("-created_at")
+            return Response(
+                response_body,
+                status=response_status,
+            )
 
-        return queryset.filter(
-            customer=self.request.user
-        ).order_by("-created_at")
+        except Exception:
 
-    def perform_create(self, serializer):
-        service = serializer.validated_data["service"]
+            if idempotency_record:
+                fail_idempotent_request(
+                    idempotency_record
+                )
 
-        booking_date = serializer.validated_data[
-            "booking_date"
+            raise
+
+    def perform_create(
+        self,
+        serializer,
+    ):
+        service = serializer.validated_data[
+            "service"
         ]
 
-        booking_time = serializer.validated_data[
-            "booking_time"
-        ]
+        booking_date = (
+            serializer.validated_data[
+                "booking_date"
+            ]
+        )
 
-        idempotency_key = self.request.headers.get(
-            "Idempotency-Key"
+        booking_time = (
+            serializer.validated_data[
+                "booking_time"
+            ]
+        )
+
+        idempotency_key = (
+            get_idempotency_key(
+                self.request
+            )
         )
 
         booking, created = create_booking(
@@ -462,7 +713,6 @@ class BookingListCreateView(
 
         self.booking_created = created
 
-
 class BookingDetailView(
     generics.RetrieveUpdateAPIView
 ):
@@ -470,12 +720,16 @@ class BookingDetailView(
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Booking.objects.select_related(
-            "customer",
-            "provider",
-            "service",
-        ).filter(
-            customer=self.request.user
+        return (
+            Booking.objects
+            .select_related(
+                "customer",
+                "provider",
+                "service",
+            )
+            .filter(
+                customer=self.request.user
+            )
         )
 
     def update(
@@ -514,15 +768,24 @@ class BookingCancelView(
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Booking.objects.select_related(
-            "customer",
-            "provider",
-            "service",
-        ).filter(
-            customer=self.request.user
+        return (
+            Booking.objects
+            .select_related(
+                "customer",
+                "provider",
+                "service",
+            )
+            .filter(
+                customer=self.request.user
+            )
         )
 
-    def post(self, request, *args, **kwargs):
+    def post(
+        self,
+        request,
+        *args,
+        **kwargs,
+    ):
         booking = self.get_object()
 
         try:
@@ -531,6 +794,7 @@ class BookingCancelView(
             )
 
         except ValueError as exc:
+
             if booking.status == "cancelled":
                 return build_api_error_response(
                     str(exc),
@@ -554,7 +818,9 @@ class BookingCancelView(
         return Response(
             BookingSerializer(
                 booking,
-                context={"request": request},
+                context={
+                    "request": request
+                },
             ).data,
             status=status.HTTP_200_OK,
         )
@@ -571,7 +837,12 @@ class BookingStatusUpdateView(
             provider__user=self.request.user
         )
 
-    def post(self, request, *args, **kwargs):
+    def post(
+        self,
+        request,
+        *args,
+        **kwargs,
+    ):
         booking = self.get_object()
 
         serializer = self.get_serializer(
@@ -585,9 +856,11 @@ class BookingStatusUpdateView(
             raise_exception=True
         )
 
-        new_status = serializer.validated_data[
-            "status"
-        ]
+        new_status = (
+            serializer.validated_data[
+                "status"
+            ]
+        )
 
         booking = update_booking_status(
             booking=booking,
@@ -599,11 +872,18 @@ class BookingStatusUpdateView(
                 "message": (
                     "Booking status updated successfully."
                 ),
-                "booking_id": str(booking.id),
+                "booking_id": str(
+                    booking.id
+                ),
                 "status": booking.status,
             },
             status=status.HTTP_200_OK,
         )
+
+
+# ============================================================
+# PAYMENTS
+# ============================================================
 
 
 class PaymentInitiateView(
@@ -641,20 +921,28 @@ class PaymentInitiateView(
         except StripeIntegrationError:
             return build_api_error_response(
                 message=(
-                    "The external payment service is "
-                    "temporarily unavailable."
+                    "The external payment service "
+                    "is temporarily unavailable."
                 ),
-                error_code="PAYMENT_SERVICE_UNAVAILABLE",
-                status_code=status.HTTP_502_BAD_GATEWAY,
+                error_code=(
+                    "PAYMENT_SERVICE_UNAVAILABLE"
+                ),
+                status_code=(
+                    status.HTTP_502_BAD_GATEWAY
+                ),
             )
 
         return Response(
             {
                 "success": True,
-                "message": "Payment initiated successfully.",
+                "message": (
+                    "Payment initiated successfully."
+                ),
                 "error_code": None,
                 "data": {
-                    "id": str(payment.id),
+                    "id": str(
+                        payment.id
+                    ),
                     "booking": str(
                         payment.booking.id
                     ),
@@ -703,10 +991,14 @@ class PaymentProcessView(
         )
 
         try:
-            payment = Payment.objects.select_related(
-                "booking"
-            ).get(
-                id=pk
+            payment = (
+                Payment.objects
+                .select_related(
+                    "booking"
+                )
+                .get(
+                    id=pk
+                )
             )
 
         except Payment.DoesNotExist:
@@ -716,9 +1008,15 @@ class PaymentProcessView(
                 status.HTTP_404_NOT_FOUND,
             )
 
-        if payment.booking.customer != request.user:
+        if (
+            payment.booking.customer
+            != request.user
+        ):
             return build_api_error_response(
-                "This payment does not belong to the current user.",
+                (
+                    "This payment does not belong "
+                    "to the current user."
+                ),
                 "PERMISSION_DENIED",
                 status.HTTP_403_FORBIDDEN,
             )
@@ -745,7 +1043,9 @@ class PaymentProcessView(
                     "Payment processed successfully."
                 ),
                 "payment": {
-                    "id": str(payment.id),
+                    "id": str(
+                        payment.id
+                    ),
                     "booking": str(
                         payment.booking.id
                     ),
@@ -810,9 +1110,11 @@ class PaymentWebhookView(
             "payment"
         ]
 
-        payment_status = serializer.validated_data[
-            "payment_status"
-        ]
+        payment_status = (
+            serializer.validated_data[
+                "payment_status"
+            ]
+        )
 
         payment = process_payment_webhook(
             payment=payment,
@@ -836,6 +1138,11 @@ class PaymentWebhookView(
             },
             status=status.HTTP_200_OK,
         )
+
+
+# ============================================================
+# PROFILE MEDIA
+# ============================================================
 
 
 class ProfileImageUploadView(
@@ -892,7 +1199,14 @@ class ProfileImageUploadView(
         )
 
 
-class ServiceImageListCreateView(APIView):
+# ============================================================
+# SERVICE IMAGES
+# ============================================================
+
+
+class ServiceImageListCreateView(
+    APIView
+):
     permission_classes = [IsAuthenticated]
 
     parser_classes = [
@@ -906,10 +1220,13 @@ class ServiceImageListCreateView(APIView):
         service_id,
     ):
         service = (
-            Service.objects.select_related(
+            Service.objects
+            .select_related(
                 "provider__user"
             )
-            .filter(id=service_id)
+            .filter(
+                id=service_id
+            )
             .first()
         )
 
@@ -920,9 +1237,15 @@ class ServiceImageListCreateView(APIView):
                 status.HTTP_404_NOT_FOUND,
             )
 
-        images = ServiceImage.objects.filter(
-            service=service
-        ).order_by("-uploaded_at")
+        images = (
+            ServiceImage.objects
+            .filter(
+                service=service
+            )
+            .order_by(
+                "-uploaded_at"
+            )
+        )
 
         paginator = ServicePagination()
 
@@ -950,10 +1273,13 @@ class ServiceImageListCreateView(APIView):
         service_id,
     ):
         service = (
-            Service.objects.select_related(
+            Service.objects
+            .select_related(
                 "provider__user"
             )
-            .filter(id=service_id)
+            .filter(
+                id=service_id
+            )
             .first()
         )
 
@@ -964,9 +1290,15 @@ class ServiceImageListCreateView(APIView):
                 status.HTTP_404_NOT_FOUND,
             )
 
-        if service.provider.user != request.user:
+        if (
+            service.provider.user
+            != request.user
+        ):
             return build_api_error_response(
-                "You can only upload images for your own service.",
+                (
+                    "You can only upload images "
+                    "for your own service."
+                ),
                 "PERMISSION_DENIED",
                 status.HTTP_403_FORBIDDEN,
             )
@@ -999,20 +1331,25 @@ class ServiceImageListCreateView(APIView):
         )
 
 
-class ServiceImageDeleteView(APIView):
+class ServiceImageDeleteView(
+    APIView
+):
     permission_classes = [IsAuthenticated]
 
     def delete(
         self,
         request,
         service_id,
-        image_id,
+        pk,
     ):
         service = (
-            Service.objects.select_related(
+            Service.objects
+            .select_related(
                 "provider__user"
             )
-            .filter(id=service_id)
+            .filter(
+                id=service_id
+            )
             .first()
         )
 
@@ -1023,17 +1360,27 @@ class ServiceImageDeleteView(APIView):
                 status.HTTP_404_NOT_FOUND,
             )
 
-        if service.provider.user != request.user:
+        if (
+            service.provider.user
+            != request.user
+        ):
             return build_api_error_response(
-                "You can only delete images from your own service.",
+                (
+                    "You can only delete images "
+                    "from your own service."
+                ),
                 "PERMISSION_DENIED",
                 status.HTTP_403_FORBIDDEN,
             )
 
-        image = ServiceImage.objects.filter(
-            id=image_id,
-            service=service,
-        ).first()
+        image = (
+            ServiceImage.objects
+            .filter(
+                id=pk,
+                service=service,
+            )
+            .first()
+        )
 
         if image is None:
             return build_api_error_response(
@@ -1049,27 +1396,49 @@ class ServiceImageDeleteView(APIView):
         )
 
 
+# ============================================================
+# NOTIFICATIONS
+# ============================================================
+
+
 class NotificationListView(
     generics.ListAPIView
 ):
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = ServicePagination
 
     def get_queryset(self):
-        return Notification.objects.select_related(
-            "booking",
-        ).filter(
-            recipient=self.request.user
-        ).order_by("-id")
+        return (
+            Notification.objects
+            .select_related(
+                "booking",
+            )
+            .filter(
+                recipient=self.request.user
+            )
+            .order_by(
+                "-id"
+            )
+        )
+
+# ============================================================
+# SAVED SERVICES
+# ============================================================
 
 
-class SavedServiceListCreateView(APIView):
+class SavedServiceListCreateView(
+    APIView
+):
     permission_classes = [
         IsAuthenticated,
         IsCustomer,
     ]
 
-    def get(self, request):
+    def get(
+        self,
+        request,
+    ):
         saved_services = list_saved_services(
             customer=request.user,
         )
@@ -1084,7 +1453,10 @@ class SavedServiceListCreateView(APIView):
             status=status.HTTP_200_OK,
         )
 
-    def post(self, request):
+    def post(
+        self,
+        request,
+    ):
         serializer = SavedServiceSerializer(
             data=request.data,
         )
@@ -1112,13 +1484,17 @@ class SavedServiceListCreateView(APIView):
 
         except SavedServiceAlreadyExists:
             return build_api_error_response(
-                message="Service has already been saved.",
+                message=(
+                    "Service has already been saved."
+                ),
                 error_code="ALREADY_SAVED",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        response_serializer = SavedServiceSerializer(
-            saved_service,
+        response_serializer = (
+            SavedServiceSerializer(
+                saved_service,
+            )
         )
 
         return Response(
@@ -1127,7 +1503,9 @@ class SavedServiceListCreateView(APIView):
         )
 
 
-class SavedServiceDeleteView(APIView):
+class SavedServiceDeleteView(
+    APIView
+):
     permission_classes = [
         IsAuthenticated,
     ]
@@ -1150,9 +1528,18 @@ class SavedServiceDeleteView(APIView):
             )
 
         return Response(
-            status=status.HTTP_204_NO_CONTENT,
+            status=status.HTTP_204_NO_CONTENT
         )
-class MediaDownloadView(APIView):
+
+
+# ============================================================
+# MEDIA DOWNLOAD
+# ============================================================
+
+
+class MediaDownloadView(
+    APIView
+):
     """
     Securely download media files.
 
@@ -1211,4 +1598,5 @@ class MediaDownloadView(APIView):
             "attachment; "
             f'filename="{media.original_filename}"'
         )
+
         return response

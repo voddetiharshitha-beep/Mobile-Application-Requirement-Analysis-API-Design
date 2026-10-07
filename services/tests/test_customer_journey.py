@@ -194,9 +194,12 @@ class CustomerJourneyTests(TransactionTestCase):
             "/api/v1/bookings/"
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.status_code,
+            200,
+        )
 
         self.assertEqual(
-            response.data["count"],
-            0,
+            response.data["results"],
+            [],
         )

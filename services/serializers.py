@@ -1016,6 +1016,17 @@ class NotificationSerializer(
             "booking",
             "notification_type",
             "message",
+            "is_read",
+            "created_at",
+            "updated_at",
+            "version",
+        ]
+
+        read_only_fields = [
+            "id",
+            "created_at",
+            "updated_at",
+            "version",
         ]
 
 
