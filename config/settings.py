@@ -24,11 +24,38 @@ load_dotenv(BASE_DIR / '.env')
 # SECURITY WARNING: keep the secret key used in production secret!
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
 
-ALLOWED_HOSTS = []
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    if host.strip()
+]
+# Production security settings
+SECURE_HSTS_SECONDS = int(
+    os.getenv("SECURE_HSTS_SECONDS", "0")
+)
+
+SECURE_HSTS_INCLUDE_SUBDOMAINS = (
+    os.getenv("SECURE_HSTS_INCLUDE_SUBDOMAINS", "False").lower() == "true"
+)
+
+SECURE_HSTS_PRELOAD = (
+    os.getenv("SECURE_HSTS_PRELOAD", "False").lower() == "true"
+)
+
+SECURE_SSL_REDIRECT = (
+    os.getenv("SECURE_SSL_REDIRECT", "False").lower() == "true"
+)
+
+SESSION_COOKIE_SECURE = (
+    os.getenv("SESSION_COOKIE_SECURE", "False").lower() == "true"
+)
+
+CSRF_COOKIE_SECURE = (
+    os.getenv("CSRF_COOKIE_SECURE", "False").lower() == "true"
+)
 
 # Application definition
 
@@ -131,13 +158,20 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
 MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
+    "default": {
+        "BACKEND": os.getenv(
+            "EMAIL_BACKEND",
+            "django.core.mail.backends.smtp.EmailBackend",
+        ),
+        "HOST": os.getenv("EMAIL_HOST", ""),
+        "PORT": int(os.getenv("EMAIL_PORT", "587")),
+        "USERNAME": os.getenv("EMAIL_HOST_USER", ""),
+        "PASSWORD": os.getenv("EMAIL_HOST_PASSWORD", ""),
+        "USE_TLS": (
+            os.getenv("EMAIL_USE_TLS", "True").lower() == "true"
+        ),
     },
 }
-
-
-
 
 
 
