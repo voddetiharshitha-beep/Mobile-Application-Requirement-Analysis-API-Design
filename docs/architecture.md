@@ -412,3 +412,73 @@ Custom exception handling for standardized error responses.
 
 The architecture separates API handling, validation, business logic, persistence, background processing, caching, and real-time communication.
 
+## 11. Before and After: Service Layer Refactoring
+
+### Before Refactoring
+
+In the earlier architecture, some business operations were more closely coupled to API request handling. This made it harder to test individual operations independently and maintain a clear separation of responsibilities.
+
+Potential maintenance challenges included:
+
+* Business operations mixed with HTTP request and response handling.
+* Booking, payment, and service-management workflows requiring careful coordination across application code.
+* Cache invalidation and background notification behavior needing consistent handling when data changed.
+* Business logic being harder to test independently of API endpoints.
+
+### After Refactoring
+
+The application uses dedicated service modules for important business operations.
+
+The request flow is:
+
+```text
+Client Request
+      |
+      v
+URL Routing
+      |
+      v
+API View
+      |
+      v
+Serializer and Validation
+      |
+      v
+Service Layer
+      |
+      v
+Django ORM / Database
+```
+
+The responsibilities are separated as follows:
+
+* **Views:** Handle HTTP requests, authentication and permissions, invoke service functions, and return API responses.
+* **Serializers:** Validate request data and represent model data in API responses.
+* **Service modules:** Implement business operations and coordinate related actions.
+* **Models and ORM:** Represent persistent data and perform database operations.
+* **Celery tasks:** Process supported background work, including notifications.
+* **Cache:** Store suitable service-list responses and invalidate them when relevant service data changes.
+
+### Service Modules
+
+| Module                    | Responsibility                                               |
+| ------------------------- | ------------------------------------------------------------ |
+| `booking_service.py`      | Booking creation, cancellation, and status updates           |
+| `payment_service.py`      | Payment initiation, processing, and webhook operations       |
+| `service_service.py`      | Service creation, updating, deletion, and cache invalidation |
+| `notification_service.py` | Notification-related operations                              |
+| `validators.py`           | Reusable validation and safe media-handling utilities        |
+
+### Testing and Verification
+
+Dedicated service-layer unit tests verify service creation, service updates, service deletion, cache invalidation, and notification dispatch conditions.
+
+The new service-layer test module contains seven passing tests. The broader `services` test suite was previously reported to pass 149 tests.
+
+These results provide evidence that the refactored operations and their tested behaviors work as expected. API integration tests remain important for verifying the complete request-to-database flow.
+
+### Architectural Outcome
+
+The refactoring improves separation of concerns, makes important business operations easier to test independently, and provides clearer locations for future changes.
+
+The architecture is not entirely free of business logic in views or serializers; future reviews should continue to identify opportunities to simplify those components while preserving existing API behavior.
