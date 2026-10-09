@@ -1,4 +1,4 @@
-Backend Architecture
+﻿Backend Architecture
 
 1. System Architecture
 
@@ -57,18 +57,18 @@ Django Models / Database
 Main application components
 
 services/
-├── views.py
-├── serializers.py
-├── models.py
-├── urls.py
-├── booking_service.py
-├── payment_service.py
-├── notification_service.py
-├── service_service.py
-├── tasks.py
-├── consumers.py
-├── pagination.py
-└── exceptions.py
+â”œâ”€â”€ views.py
+â”œâ”€â”€ serializers.py
+â”œâ”€â”€ models.py
+â”œâ”€â”€ urls.py
+â”œâ”€â”€ booking_service.py
+â”œâ”€â”€ payment_service.py
+â”œâ”€â”€ notification_service.py
+â”œâ”€â”€ service_service.py
+â”œâ”€â”€ tasks.py
+â”œâ”€â”€ consumers.py
+â”œâ”€â”€ pagination.py
+â””â”€â”€ exceptions.py
 
 Views
 
@@ -82,13 +82,13 @@ Service layer
 
 Business operations are separated into dedicated modules:
 
-booking_service.py — booking creation, cancellation, and status transitions.
+booking_service.py â€” booking creation, cancellation, and status transitions.
 
-payment_service.py — payment initiation, processing, and webhook handling.
+payment_service.py â€” payment initiation, processing, and webhook handling.
 
-notification_service.py — dispatching notification tasks.
+notification_service.py â€” dispatching notification tasks.
 
-service_service.py — service creation, update, deletion, and cache invalidation.
+service_service.py â€” service creation, update, deletion, and cache invalidation.
 
 This keeps views smaller and reduces duplicated business logic.
 
@@ -411,3 +411,4 @@ DRF serializers for request validation and API representation.
 Custom exception handling for standardized error responses.
 
 The architecture separates API handling, validation, business logic, persistence, background processing, caching, and real-time communication.
+
