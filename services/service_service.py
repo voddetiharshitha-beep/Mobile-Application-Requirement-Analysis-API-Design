@@ -57,11 +57,11 @@ def update_service(*, serializer):
     return service
 
 
+
 def delete_service(*, service):
     """
-    Delete an existing service.
+    Delete an existing service and invalidate cached service lists.
     """
 
     service.delete()
-
     clear_service_list_cache()

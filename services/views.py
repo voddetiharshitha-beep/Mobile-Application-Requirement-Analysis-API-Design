@@ -200,12 +200,11 @@ class LogoutView(APIView):
 
 # ============================================================
 # SERVICES
-# ============================================================
+# ==========================================================
 
 
-class ServiceListCreateView(
-    generics.ListCreateAPIView
-):
+
+class ServiceListCreateView(generics.ListCreateAPIView):
     serializer_class = ServiceSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = ServicePagination
@@ -213,95 +212,45 @@ class ServiceListCreateView(
     def get_serializer_class(self):
         if self.request.method == "GET":
             return ServiceListSerializer
-
         return ServiceSerializer
 
-    def list(
-        self,
-        request,
-        *args,
-        **kwargs,
-    ):
-        """
-        Return cached Service List API response
-        when available.
-        """
-
-        cache_key = (
-            f"service_list:{request.get_full_path()}"
-        )
-
-        cached_data = cache.get(
-            cache_key
-        )
+    def list(self, request, *args, **kwargs):
+        cache_key = f"service_list:{request.get_full_path()}"
+        cached_data = cache.get(cache_key)
 
         if cached_data is not None:
-            return Response(
-                cached_data
-            )
+            return Response(cached_data)
 
-        response = super().list(
-            request,
-            *args,
-            **kwargs,
-        )
+        response = super().list(request, *args, **kwargs)
 
         cache.set(
             cache_key,
             response.data,
             settings.SERVICE_LIST_CACHE_TIMEOUT,
         )
-
         return response
 
     def get_queryset(self):
         queryset = (
             Service.objects
-            .select_related(
-                "category",
-                "provider",
-            )
+            .select_related("category", "provider")
             .all()
+            .order_by("id")
         )
 
-        name = self.request.query_params.get(
-            "name"
-        )
+        params = self.request.query_params
 
-        category = self.request.query_params.get(
-            "category"
-        )
-
-        provider = self.request.query_params.get(
-            "provider"
-        )
-
-        location = self.request.query_params.get(
-            "location"
-        )
-
-        price = self.request.query_params.get(
-            "price"
-        )
-
-        min_price = self.request.query_params.get(
-            "min_price"
-        )
-
-        max_price = self.request.query_params.get(
-            "max_price"
-        )
-
-        status_filter = (
-            self.request.query_params.get(
-                "status"
-            )
-        )
+        name = params.get("name")
+        category = params.get("category")
+        provider = params.get("provider")
+        location = params.get("location")
+        price = params.get("price")
+        min_price = params.get("min_price")
+        max_price = params.get("max_price")
+        status_filter = params.get("status")
 
         if name:
-            queryset = queryset.filter(
-                name__icontains=name
-            )
+            queryset = queryset.filter(name__icontains=name)
 
         if category:
             queryset = queryset.filter(
@@ -319,59 +268,42 @@ class ServiceListCreateView(
             )
 
         if price:
-            queryset = queryset.filter(
-                price=price
-            )
+            queryset = queryset.filter(price=price)
 
         if min_price:
-            queryset = queryset.filter(
-                price__gte=min_price
-            )
+            queryset = queryset.filter(price__gte=min_price)
 
         if max_price:
-            queryset = queryset.filter(
-                price__lte=max_price
-            )
+            queryset = queryset.filter(price__lte=max_price)
 
-        if status_filter:
-            queryset = queryset.filter(
-                status=(
-                    status_filter.lower()
-                    == "true"
+        if status_filter is not None:
+            normalized_status = status_filter.lower()
+
+            if normalized_status in ("true", "false"):
+                queryset = queryset.filter(
+                    status=(normalized_status == "true")
                 )
-            )
 
-        ordering = (
-            self.request.query_params.get(
-                "ordering"
-            )
-        )
+        ordering = params.get("ordering")
 
-        if ordering in [
+        if ordering in (
             "price",
             "-price",
             "created_at",
             "-created_at",
-        ]:
-            queryset = queryset.order_by(
-                ordering
-            )
+        ):
+            queryset = queryset.order_by(ordering, "id")
 
         return queryset
 
-    def perform_create(
-        self,
-        serializer,
-    ):
-        try:
-            provider = Provider.objects.get(
-                user=self.request.user
-            )
+    def perform_create(self, serializer):
+        provider = Provider.objects.filter(
+            user=self.request.user
+        ).first()
 
-        except Provider.DoesNotExist:
+        if provider is None:
             raise PermissionDenied(
-                "Only registered providers can "
-                "create services."
+                "Only registered providers can create services."
             )
 
         create_service(
@@ -379,30 +311,28 @@ class ServiceListCreateView(
             provider=provider,
         )
 
+# ============================================================
+# SERVICE DETAIL
+# ============================================================
 
-class ServiceDetailView(
-    generics.RetrieveUpdateDestroyAPIView
-):
+class ServiceDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = ServiceSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Service.objects.select_related(
-            "category",
-            "provider",
+        return (
+            Service.objects
+            .select_related("category", "provider")
+            .all()
+            .order_by("id")
         )
 
-    def update(
-        self,
-        request,
-        *args,
-        **kwargs,
-    ):
+    def update(self, request, *args, **kwargs):
         service = self.get_object()
 
         if (
-            service.provider.user
-            != request.user
+            service.provider is None
+            or service.provider.user != request.user
         ):
             return build_api_error_response(
                 "You can only update your own services.",
@@ -410,41 +340,28 @@ class ServiceDetailView(
                 status.HTTP_403_FORBIDDEN,
             )
 
-        partial = kwargs.pop(
-            "partial",
-            False,
-        )
+        partial = kwargs.pop("partial", False)
 
         serializer = self.get_serializer(
             service,
             data=request.data,
             partial=partial,
         )
+        serializer.is_valid(raise_exception=True)
 
-        serializer.is_valid(
-            raise_exception=True
-        )
-
-        update_service(
-            serializer=serializer,
-        )
+        update_service(serializer=serializer)
 
         return Response(
             serializer.data,
             status=status.HTTP_200_OK,
         )
 
-    def destroy(
-        self,
-        request,
-        *args,
-        **kwargs,
-    ):
+    def destroy(self, request, *args, **kwargs):
         service = self.get_object()
 
         if (
-            service.provider.user
-            != request.user
+            service.provider is None
+            or service.provider.user != request.user
         ):
             return build_api_error_response(
                 "You can only delete your own services.",
@@ -452,15 +369,11 @@ class ServiceDetailView(
                 status.HTTP_403_FORBIDDEN,
             )
 
-        delete_service(
-            service=service,
-        )
+        delete_service(service=service)
 
         return Response(
-            status=status.HTTP_204_NO_CONTENT
+            status=status.HTTP_204_NO_CONTENT,
         )
-
-
 # ============================================================
 # BOOKINGS
 # ============================================================
@@ -826,6 +739,7 @@ class BookingCancelView(
         )
 
 
+
 class BookingStatusUpdateView(
     generics.GenericAPIView
 ):
@@ -868,17 +782,16 @@ class BookingStatusUpdateView(
         )
 
         return Response(
-            {
-                "message": (
-                    "Booking status updated successfully."
-                ),
-                "booking_id": str(
-                    booking.id
-                ),
-                "status": booking.status,
-            },
+            BookingSerializer(
+                booking,
+                context={
+                    "request": request,
+                },
+            ).data,
             status=status.HTTP_200_OK,
         )
+
+
 
 
 # ============================================================

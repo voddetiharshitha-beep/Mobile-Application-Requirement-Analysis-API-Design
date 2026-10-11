@@ -1,3 +1,4 @@
+
 from decimal import Decimal
 
 from django.contrib.auth.models import User
@@ -58,12 +59,12 @@ class ServiceCacheAPITest(TestCase):
         cache.clear()
 
     def test_service_list_cache_miss_then_hit(self):
-        # Cache should initially be empty.
+        # The cache should initially be empty.
         self.assertIsNone(
             cache.get(self.cache_key)
         )
 
-        # First request = cache MISS.
+        # First request: cache MISS.
         first_response = self.client.get(
             self.url
         )
@@ -73,7 +74,7 @@ class ServiceCacheAPITest(TestCase):
             200,
         )
 
-        # The API should now have stored the response.
+        # The API should now have cached the response.
         cached_data = cache.get(
             self.cache_key
         )
@@ -87,7 +88,7 @@ class ServiceCacheAPITest(TestCase):
             first_response.data,
         )
 
-        # Second request = cache HIT.
+        # Second request: cache HIT.
         second_response = self.client.get(
             self.url
         )
@@ -127,7 +128,7 @@ class ServiceCacheAPITest(TestCase):
         )
 
     def test_service_list_cache_is_invalidated_after_service_creation(self):
-        # First request populates the cache.
+        # Populate the cache.
         response = self.client.get(
             self.url
         )
@@ -166,17 +167,12 @@ class ServiceCacheAPITest(TestCase):
             201,
         )
 
-        # Creating a service should invalidate
-        # the Service List cache.
-        cached_after = cache.get(
-            self.cache_key
-        )
-
+        # Creating a service should invalidate the cache.
         self.assertIsNone(
-            cached_after
+            cache.get(self.cache_key)
         )
 
-        # The next request rebuilds the cache.
+        # The next request should rebuild the cache.
         refreshed_response = self.client.get(
             self.url
         )
@@ -197,4 +193,161 @@ class ServiceCacheAPITest(TestCase):
         self.assertEqual(
             refreshed_cache,
             refreshed_response.data,
+        )
+
+        # Verify that the new service appears in the response.
+        results = (
+            refreshed_response.data.get(
+                "results",
+                refreshed_response.data,
+            )
+            if isinstance(
+                refreshed_response.data,
+                dict,
+            )
+            else refreshed_response.data
+        )
+
+        self.assertTrue(
+            any(
+                item["name"] == "New Cached Service"
+                for item in results
+            )
+        )
+
+    def test_service_list_cache_is_invalidated_after_service_update(self):
+        # Populate the cache.
+        response = self.client.get(
+            self.url
+        )
+
+        self.assertEqual(
+            response.status_code,
+            200,
+        )
+
+        self.assertIsNotNone(
+            cache.get(self.cache_key)
+        )
+
+        # Update the service through the API.
+        detail_url = (
+            f"{self.url}{self.service.id}/"
+        )
+
+        update_response = self.client.patch(
+            detail_url,
+            {
+                "name": "Updated Cache API Service",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            update_response.status_code,
+            200,
+        )
+
+        # The old cached list should be removed.
+        self.assertIsNone(
+            cache.get(self.cache_key)
+        )
+
+        # A fresh request should rebuild the list.
+        refreshed_response = self.client.get(
+            self.url
+        )
+
+        self.assertEqual(
+            refreshed_response.status_code,
+            200,
+        )
+
+        results = (
+            refreshed_response.data.get(
+                "results",
+                refreshed_response.data,
+            )
+            if isinstance(
+                refreshed_response.data,
+                dict,
+            )
+            else refreshed_response.data
+        )
+
+        self.assertTrue(
+            any(
+                item["name"] == "Updated Cache API Service"
+                for item in results
+            )
+        )
+
+    def test_service_list_cache_is_invalidated_after_service_deletion(self):
+        # Populate the cache.
+        response = self.client.get(
+            self.url
+        )
+
+        self.assertEqual(
+            response.status_code,
+            200,
+        )
+
+        self.assertIsNotNone(
+            cache.get(self.cache_key)
+        )
+
+        # Delete the service through the API.
+        detail_url = (
+            f"{self.url}{self.service.id}/"
+        )
+
+        delete_response = self.client.delete(
+            detail_url
+        )
+
+        self.assertEqual(
+            delete_response.status_code,
+            204,
+        )
+
+        # Confirm that the service was deleted from the database.
+        self.assertFalse(
+            Service.objects.filter(
+                pk=self.service.pk
+            ).exists()
+        )
+
+        # The cached list should be removed.
+        self.assertIsNone(
+            cache.get(self.cache_key)
+        )
+
+        # A fresh request should not contain the deleted service.
+        refreshed_response = self.client.get(
+            self.url
+        )
+
+        self.assertEqual(
+            refreshed_response.status_code,
+            200,
+        )
+
+        results = (
+            refreshed_response.data.get(
+                "results",
+                refreshed_response.data,
+            )
+            if isinstance(
+                refreshed_response.data,
+                dict,
+            )
+            else refreshed_response.data
+        )
+
+        self.assertFalse(
+            any(
+                item["name"] == "Cache API Service"
+                for item in results
+            )
         )
