@@ -7,6 +7,9 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from services.models import Category, Provider, Service
+from unittest.mock import patch
+
+from rest_framework import status
 
 
 @override_settings(
@@ -350,4 +353,47 @@ class ServiceCacheAPITest(TestCase):
                 item["name"] == "Cache API Service"
                 for item in results
             )
+
         )
+
+    @patch(
+        "services.views.cache.get",
+        side_effect=ConnectionError("Simulated Redis read failure"),
+    )
+    def test_service_list_works_when_cache_read_fails(
+        self,
+        mock_cache_get,
+    ):
+        response = self.client.get(self.url)
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertTrue(
+            Service.objects.filter(
+                pk=self.service.pk
+            ).exists()
+        )
+        mock_cache_get.assert_called_once()
+
+    @patch(
+        "services.views.cache.set",
+        side_effect=ConnectionError("Simulated Redis write failure"),
+    )
+    def test_service_list_works_when_cache_write_fails(
+        self,
+        mock_cache_set,
+    ):
+        response = self.client.get(self.url)
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertTrue(
+            Service.objects.filter(
+                pk=self.service.pk
+            ).exists()
+        )
+        mock_cache_set.assert_called_once()

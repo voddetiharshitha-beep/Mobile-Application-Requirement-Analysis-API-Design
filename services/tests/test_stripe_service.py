@@ -247,3 +247,29 @@ class StripePaymentIntentTests(SimpleTestCase):
             "The external payment service is temporarily "
             "unavailable.",
         )
+
+    @override_settings(
+        STRIPE_SECRET_KEY="sk_test_unit_test_key",
+        STRIPE_API_TIMEOUT=10.0,
+    )
+    @patch("services.stripe_service._get_stripe_client")
+    def test_stripe_timeout_is_converted_to_safe_error(
+        self,
+        mock_get_stripe_client,
+    ):
+        mock_client = mock_get_stripe_client.return_value
+        mock_client.v1.payment_intents.create.side_effect = (
+            TimeoutError("Simulated Stripe timeout")
+        )
+
+        with self.assertRaises(StripeIntegrationError) as context:
+            create_payment_intent(
+                amount=Decimal("500.00"),
+                currency="inr",
+                idempotency_key="payment-timeout-test-001",
+            )
+
+        self.assertNotIn(
+            "Simulated Stripe timeout",
+            str(context.exception),
+        )

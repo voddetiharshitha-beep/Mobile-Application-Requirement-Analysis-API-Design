@@ -41,12 +41,14 @@ def make_request(user_id):
             "status": response.status_code,
             "elapsed_ms": elapsed_ms,
         }
+
     except Exception as exc:
         return {
             "status": "ERROR",
             "elapsed_ms": 0,
             "error": str(exc),
         }
+
     finally:
         close_old_connections()
 
@@ -62,11 +64,14 @@ def main():
         print("ERROR: No active user exists in the database.")
         return
 
+    # Clear the service-list cache before priming it.
+    try:
+        cache.delete_pattern("service_list:*")
+    except Exception as exc:
+        print(f"ERROR: Could not clear service-list cache: {exc}")
+        return
+
     # Prime the cache before measuring concurrent requests.
-    cache.delete_pattern("service_list:*")
-
-    from rest_framework.test import APIClient
-
     warm_client = APIClient()
     warm_client.force_authenticate(user=user)
     warm_response = warm_client.get(URL)
@@ -102,6 +107,7 @@ def main():
         result for result in results
         if result["status"] == 200
     ]
+
     failures = [
         result for result in results
         if result["status"] != 200
@@ -137,9 +143,14 @@ def main():
     print("=" * 65)
 
     if len(successful) == TOTAL_REQUESTS:
-        print("RESULT: PASS — all concurrent requests returned HTTP 200.")
+        print(
+            "RESULT: PASS — all concurrent requests "
+            "returned HTTP 200."
+        )
     else:
-        print("RESULT: CHECK REQUIRED — inspect failed requests.")
+        print(
+            "RESULT: CHECK REQUIRED — inspect failed requests."
+        )
 
 
 if __name__ == "__main__":

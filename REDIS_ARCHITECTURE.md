@@ -1,4 +1,4 @@
-# Redis Caching and Scalability Architecture
+﻿# Redis Caching and Scalability Architecture
 
 ## 1. Objective
 
@@ -196,7 +196,99 @@ has not yet been integrated with a Redis lock. That requirement remains
 open until a suitable operation is selected, implemented safely, and tested
 under concurrent requests.
 
-Further work includes confirming rate-limit coverage, testing Redis failure
-behavior, reviewing the modified backup file, and completing focused
-business-operation concurrency testing before committing the changes.
-'@ | Set-Content .\REDIS_ARCHITECTURE.md -Encoding utf8
+Remaining work includes:
+- Integrate and test a bounded Redis lock for a suitable business operation.
+- Test and document application behavior when Redis is unavailable.
+- Review logging and observability for critical application components.
+- Repeat concurrency and performance tests and record the results.
+- Review the working tree before committing changes.
+# Caching Strategy
+
+## 1. Caching Objectives
+
+Redis is used to reduce repeated database queries, improve API response times, and reduce load on PostgreSQL. Cache entries should have defined expiration periods and invalidation rules.
+
+The PostgreSQL database remains the authoritative source for persistent application data.
+
+## 2. What Should Be Cached?
+
+| Data | Caching Strategy | Suggested TTL | Invalidation |
+|---|---|---|---|
+| Popular services | Cache frequently requested service-list responses | 60 seconds | Invalidate when a service is created, updated, or deleted |
+| Service categories | Cache category lists that change infrequently | 5–15 minutes | Invalidate when a category is created, updated, or deleted |
+| User session data | Cache only suitable session or authentication-related data | Based on session expiry | Invalidate on logout, expiration, or relevant security changes |
+| Frequently accessed data | Cache stable, read-heavy data such as public service details | 1–5 minutes | Invalidate when the underlying data changes |
+| Bookings and payments | Avoid treating cached values as authoritative | Not applicable by default | Read current database state for critical operations |
+
+TTL values are initial recommendations, not measured performance requirements. They should be adjusted using actual access patterns, freshness requirements, and performance tests.
+
+Sensitive information, including passwords, access tokens, and payment secrets, must not be cached casually. Any session or authentication cache must use appropriate access controls, expiration, and invalidation.
+
+## 3. Time to Live (TTL)
+
+Time to Live (TTL) defines how long a cached entry remains valid before it expires.
+
+For example, a service-list cache may use a TTL of 60 seconds. Repeated requests within that period can reuse the cached result. After expiration, the application obtains fresh data and caches it again.
+
+Benefits include:
+
+- Limiting how long cached data can remain stale.
+- Automatically removing expired entries.
+- Reducing repeated database queries.
+
+TTL does not guarantee immediate freshness. If data changes before the TTL expires, invalidation may be necessary.
+
+## 4. Cache Invalidation
+
+Cache invalidation removes or refreshes cached data after the underlying database data changes.
+
+For service listings, the application should invalidate affected cache entries after successful service creation, update, or deletion.
+
+Recommended practices:
+
+1. Perform the database operation successfully before invalidating its cache.
+2. Invalidate all relevant cache variants, including entries for different query parameters or pagination.
+3. Use consistent cache-key naming.
+4. Handle cache failures without accidentally reporting a failed database write when the database transaction actually succeeded.
+5. Where strict coordination is required, use transaction-aware invalidation or a reliable post-commit mechanism.
+
+Cache invalidation must cover every code path that changes the underlying data, including administrative operations and background tasks.
+
+## 5. Cache Stampede
+
+A cache stampede occurs when a popular cache entry expires and many simultaneous requests attempt to regenerate it. This can send a sudden burst of queries to PostgreSQL.
+
+Mitigation strategies include:
+
+- **Distributed locking:** Allow one worker to regenerate a particular cache entry while other workers wait briefly or use a permitted fallback.
+- **TTL jitter:** Add a small random variation to expiration times so many entries do not expire simultaneously.
+- **Stale-while-revalidate:** Serve a previously cached value briefly while one worker refreshes it, where the data freshness requirements allow this.
+- **Request coalescing:** Combine concurrent requests for the same missing cache key into one regeneration operation.
+- **Monitoring:** Track cache misses, regeneration duration, Redis errors, and database load.
+
+A lock should have a bounded expiry and safe release behavior. It must not remain held indefinitely if a worker crashes.
+
+## 6. Cache Consistency
+
+Cache consistency describes how closely cached data reflects the current database state.
+
+This backend uses PostgreSQL as the source of truth and Redis as a performance optimization. Cache invalidation and expiration reduce staleness, but they do not automatically provide strong consistency.
+
+For public service listings, short-lived eventual consistency may be acceptable. For booking status, payment status, authorization decisions, and other critical operations, the application should validate against authoritative data and must not rely solely on potentially stale cache entries.
+
+When using a transaction, cache invalidation should occur only after the database changes have committed successfully. If invalidation fails, monitoring and a recovery mechanism should help prevent stale data from persisting unnoticed.
+
+## 7. Testing and Monitoring
+
+Validate the caching strategy with automated tests for:
+
+- Cache miss followed by cache hit.
+- Expiration after the configured TTL.
+- Invalidation after service creation, update, and deletion.
+- Concurrent requests for the same uncached resource.
+- Redis unavailability and recovery behavior.
+- Response correctness after cached data changes.
+
+Monitor cache hit rate, miss rate, eviction count, Redis memory use, regeneration latency, and PostgreSQL query load.
+
+Performance improvements should be demonstrated by comparing repeated requests with caching disabled and enabled under equivalent test conditions.

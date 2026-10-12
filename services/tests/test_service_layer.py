@@ -1,4 +1,3 @@
-
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -31,7 +30,7 @@ class ServiceLayerTests(SimpleTestCase):
     def test_clear_service_list_cache_handles_unsupported_delete_pattern(
         self, mock_delete_pattern
     ):
-        # The function should not raise AttributeError.
+        # Cache invalidation failure should not break the request.
         clear_service_list_cache()
 
         mock_delete_pattern.assert_called_once_with(
@@ -85,6 +84,51 @@ class ServiceLayerTests(SimpleTestCase):
         serializer.save.assert_called_once_with()
         mock_clear_cache.assert_called_once_with()
         mock_notify.assert_called_once_with("service-123")
+
+    @patch("services.service_service.logger.exception")
+    @patch("services.service_service.clear_service_list_cache")
+    @patch(
+        "services.service_service."
+        "notify_saved_customers_service_unavailable.delay",
+        side_effect=ConnectionError(
+            "Simulated Celery broker failure"
+        ),
+    )
+    def test_update_service_when_celery_queue_fails(
+        self,
+        mock_notify,
+        mock_clear_cache,
+        mock_log_exception,
+    ):
+        existing_service = SimpleNamespace(
+            id="service-failure-test",
+            status=True,
+        )
+        updated_service = SimpleNamespace(
+            id="service-failure-test",
+            status=False,
+        )
+
+        serializer = MagicMock()
+        serializer.instance = existing_service
+        serializer.save.return_value = updated_service
+
+        # The service update should succeed even if Celery fails.
+        result = update_service(serializer=serializer)
+
+        self.assertIs(result, updated_service)
+        serializer.save.assert_called_once_with()
+
+        # Cache invalidation should still happen.
+        mock_clear_cache.assert_called_once_with()
+
+        # Verify the notification attempt.
+        mock_notify.assert_called_once_with(
+            "service-failure-test"
+        )
+
+        # Verify the failure is logged.
+        mock_log_exception.assert_called_once()
 
     @patch("services.service_service.clear_service_list_cache")
     @patch(

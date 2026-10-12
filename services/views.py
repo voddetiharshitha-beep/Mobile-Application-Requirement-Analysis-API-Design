@@ -1,3 +1,6 @@
+
+import logging
+
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.core.cache import cache
@@ -83,7 +86,7 @@ from .saved_service_service import (
 )
 
 from .media_service import get_media_for_access
-
+logger = logging.getLogger(__name__)
 
 def build_api_error_response(
     message,
@@ -204,6 +207,7 @@ class LogoutView(APIView):
 
 
 
+
 class ServiceListCreateView(generics.ListCreateAPIView):
     serializer_class = ServiceSerializer
     permission_classes = [IsAuthenticated]
@@ -214,21 +218,91 @@ class ServiceListCreateView(generics.ListCreateAPIView):
             return ServiceListSerializer
         return ServiceSerializer
 
+
+
     def list(self, request, *args, **kwargs):
+        """Cache service-list responses and reduce duplicate cache-miss queries."""
         cache_key = f"service_list:{request.get_full_path()}"
-        cached_data = cache.get(cache_key)
+        lock_key = f"service_list_lock:{cache_key}"
+
+        try:
+            cached_data = cache.get(cache_key)
+        except Exception:
+            logger.exception(
+                "Service-list cache read failed; falling back to database."
+            )
+            return super().list(request, *args, **kwargs)
 
         if cached_data is not None:
             return Response(cached_data)
 
-        response = super().list(request, *args, **kwargs)
+        lock = None
+        acquired = False
 
-        cache.set(
-            cache_key,
-            response.data,
-            settings.SERVICE_LIST_CACHE_TIMEOUT,
-        )
-        return response
+        try:
+            lock = cache.lock(
+                lock_key,
+                timeout=30,
+                blocking_timeout=3,
+            )
+            acquired = lock.acquire(blocking=True)
+        except Exception:
+            logger.exception(
+                "Service-list cache lock failed; falling back to database."
+            )
+
+        if not acquired:
+            try:
+                cached_data = cache.get(cache_key)
+            except Exception:
+                logger.exception(
+                    "Service-list cache recheck failed; "
+                    "falling back to database."
+                )
+                cached_data = None
+
+            if cached_data is not None:
+                return Response(cached_data)
+
+            return super().list(request, *args, **kwargs)
+
+        try:
+            try:
+                cached_data = cache.get(cache_key)
+            except Exception:
+                logger.exception(
+                    "Service-list cache recheck failed; "
+                    "falling back to database."
+                )
+                cached_data = None
+
+            if cached_data is not None:
+                return Response(cached_data)
+
+            response = super().list(request, *args, **kwargs)
+
+            try:
+                cache.set(
+                    cache_key,
+                    response.data,
+                    settings.SERVICE_LIST_CACHE_TIMEOUT,
+                )
+            except Exception:
+                logger.exception(
+                    "Service-list cache write failed; "
+                    "returning database response."
+                )
+
+            return response
+
+        finally:
+            try:
+                lock.release()
+            except Exception:
+                logger.exception(
+                    "Failed to release service-list cache lock."
+                )
+
 
     def get_queryset(self):
         queryset = (
@@ -310,6 +384,7 @@ class ServiceListCreateView(generics.ListCreateAPIView):
             serializer=serializer,
             provider=provider,
         )
+
 
 # ============================================================
 # SERVICE DETAIL
@@ -1338,20 +1413,13 @@ class NotificationListView(
 # ============================================================
 # SAVED SERVICES
 # ============================================================
-
-
-class SavedServiceListCreateView(
-    APIView
-):
+class SavedServiceListCreateView(APIView):
     permission_classes = [
         IsAuthenticated,
         IsCustomer,
     ]
 
-    def get(
-        self,
-        request,
-    ):
+    def get(self, request):
         saved_services = list_saved_services(
             customer=request.user,
         )
@@ -1366,10 +1434,7 @@ class SavedServiceListCreateView(
             status=status.HTTP_200_OK,
         )
 
-    def post(
-        self,
-        request,
-    ):
+    def post(self, request):
         serializer = SavedServiceSerializer(
             data=request.data,
         )
@@ -1378,36 +1443,28 @@ class SavedServiceListCreateView(
             raise_exception=True,
         )
 
-        service = serializer.validated_data[
-            "service"
-        ]
+        service = serializer.validated_data["service"]
 
         try:
             saved_service = save_service(
                 customer=request.user,
                 service=service,
             )
-
         except ServiceNotFound:
             return build_api_error_response(
                 message="Service not found.",
                 error_code="SERVICE_NOT_FOUND",
                 status_code=status.HTTP_404_NOT_FOUND,
             )
-
         except SavedServiceAlreadyExists:
             return build_api_error_response(
-                message=(
-                    "Service has already been saved."
-                ),
+                message="Service has already been saved.",
                 error_code="ALREADY_SAVED",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        response_serializer = (
-            SavedServiceSerializer(
-                saved_service,
-            )
+        response_serializer = SavedServiceSerializer(
+            saved_service,
         )
 
         return Response(
@@ -1416,18 +1473,12 @@ class SavedServiceListCreateView(
         )
 
 
-class SavedServiceDeleteView(
-    APIView
-):
+class SavedServiceDeleteView(APIView):
     permission_classes = [
         IsAuthenticated,
     ]
 
-    def delete(
-        self,
-        request,
-        pk,
-    ):
+    def delete(self, request, pk):
         deleted = delete_saved_service(
             customer=request.user,
             saved_service_id=pk,
@@ -1441,8 +1492,80 @@ class SavedServiceDeleteView(
             )
 
         return Response(
-            status=status.HTTP_204_NO_CONTENT
+            status=status.HTTP_204_NO_CONTENT,
         )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # ============================================================

@@ -1,3 +1,6 @@
+
+from services import health_views
+
 from django.contrib import admin
 from django.urls import include, path
 from rest_framework_simplejwt.views import TokenRefreshView
@@ -57,9 +60,14 @@ urlpatterns = [
     PasswordChangeView.as_view(),
     name="password-change",
   ),
-     
+
      path(
     "api/v1/saved-services/",
     include("services.saved_service_urls"),
 ),
+
+
+path("health/live/", health_views.liveness_view, name="health-live"),
+path("health/ready/", health_views.readiness_view, name="health-ready"),
+
 ]

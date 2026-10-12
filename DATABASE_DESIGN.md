@@ -372,3 +372,200 @@ The design uses:
 * Automatic creation timestamp
 
 This design supports the functional requirements of the Saved Services feature while maintaining data integrity and efficient customer-specific queries.
+---
+
+# 15. PostgreSQL Database for Scalability
+
+## 15.1 Database Choice
+
+The mobile service booking backend uses PostgreSQL as its relational database.
+
+PostgreSQL is suitable because it provides:
+
+- ACID transactions for reliable booking and payment operations.
+- Foreign keys, unique constraints, and indexes for data integrity.
+- Efficient querying and filtering for service listings and bookings.
+- Concurrent access control for requests from multiple users.
+- Backup and recovery tools.
+- Replication options for improving availability and read scalability.
+
+The application is configured to use PostgreSQL through Django's database settings and environment variables.
+
+## 15.2 Main Read and Write Operations
+
+| Operation | Access pattern | Database approach |
+|---|---|---|
+| Browse services | Read-heavy | Query filtering, pagination, indexes, Redis caching |
+| View saved services | Read-heavy | Customer filtering and suitable indexes |
+| Create a booking | Write | Database transaction and validation |
+| Change booking status | Write | Transaction and row-level locking where required |
+| Initiate a payment | Write | Transactional updates and payment-state validation |
+| Read notifications | Read-heavy | Filter by user and use pagination |
+| Update user profile | Write | Validate and persist changes |
+
+Service listings and other frequently requested data can benefit from caching. Booking and payment changes must be persisted reliably in PostgreSQL.
+
+Redis caching must not be treated as the authoritative source for booking or payment records.
+
+# 16. Database Indexing Strategy
+
+Indexes help PostgreSQL locate records without scanning an entire table for every query. They improve read performance but consume storage and add overhead to inserts, updates, and deletes.
+
+The application should maintain indexes based on actual query patterns.
+
+Important examples include:
+
+- Booking provider, booking date, and booking time for provider schedules.
+- Saved-service customer and creation time for a customer's saved list.
+- A unique constraint on saved-service customer and service.
+- Idempotency-key lookup indexes for safely handling repeated requests.
+- Foreign-key and frequently filtered fields where query analysis shows an indexing benefit.
+
+Before adding new indexes, inspect existing model definitions and migrations to avoid duplicate indexes.
+
+Use PostgreSQL's `EXPLAIN` and, where appropriate, `EXPLAIN ANALYZE` to evaluate query plans. Run performance analysis against representative data and avoid running expensive analysis against production workloads without considering its impact.
+
+# 17. Transactions and Data Consistency
+
+A database transaction groups related operations so that they succeed or fail together.
+
+For example, booking creation and payment processing may require multiple database changes. If one required operation fails, the database changes within the transaction should be rolled back.
+
+The project uses Django transaction management, including `transaction.atomic()` in relevant service-layer operations. Row-level locking with `select_for_update()` can protect critical records from conflicting concurrent updates.
+
+The design follows these principles:
+
+1. Validate input and permissions before changing records.
+2. Use transactions for related database writes that must succeed together.
+3. Lock rows when concurrent changes could violate a business rule.
+4. Keep transactions short to reduce lock contention.
+5. Use unique constraints and idempotency keys to prevent duplicate operations.
+6. Do not hold a database transaction open while waiting for a slow external payment provider.
+7. Treat payment-provider communication and webhook retries as separate reliability concerns.
+
+Transactions and locking help maintain consistency, but they do not replace appropriate validation, database constraints, or payment idempotency.
+
+# 18. Connection Pooling
+
+Every database connection consumes resources. Under heavy traffic, opening too many connections can exhaust PostgreSQL's connection limit and reduce application performance.
+
+Connection pooling reuses database connections rather than opening a new physical connection for every request.
+
+Possible production approaches include:
+
+- PgBouncer as an external PostgreSQL connection pooler.
+- Django persistent connections using `CONN_MAX_AGE`, configured according to the deployment model.
+- Connection health checks and sensible database connection limits.
+
+The appropriate settings depend on the number of application workers, database capacity, transaction behavior, and whether an external pooler is used.
+
+**Current implementation note:** Do not describe PgBouncer or persistent connection pooling as deployed unless it has actually been configured and verified. Connection pooling is a production scalability recommendation when it is not yet enabled.
+
+# 19. Scaling to One Million Users
+
+Supporting one million registered users does not mean that one million database connections are required. Capacity planning must account for concurrent requests, read/write ratios, query complexity, storage, and peak traffic.
+
+A proposed scaling strategy is:
+
+1. **Application layer:** Run multiple application workers or instances behind a load balancer.
+2. **Database layer:** Use PostgreSQL with suitable indexes, short transactions, and query optimization.
+3. **Caching layer:** Use Redis for frequently accessed service listings and other suitable cacheable data.
+4. **Read optimization:** Apply pagination, avoid unnecessary related-object queries, and review slow queries.
+5. **Connection management:** Limit application connections and introduce a pooler when appropriate.
+6. **Read replicas:** Consider PostgreSQL replicas for eligible read-heavy workloads after measuring primary database pressure.
+7. **Monitoring:** Track query latency, connection usage, cache hit rate, database CPU, storage, and error rates.
+8. **Load testing:** Test realistic concurrent traffic and data volumes before selecting production capacity.
+
+A million registered users is a planning target, not proof that the current deployment can sustain a particular request rate. Capacity must be demonstrated through testing.
+
+--------------
+# 20. PostgreSQL Backup and Recovery
+
+PostgreSQL backups help recover database data after accidental deletion, data corruption, hardware failure, or other incidents.
+
+## 20.1 Backup Strategy
+
+The project database can be backed up using PostgreSQL's `pg_dump` utility. The custom archive format (`-F c`) supports inspection and selective restoration with PostgreSQL's `pg_restore` utility.
+
+Example PowerShell commands:
+
+```powershell
+pg_dump -h localhost -p 5432 -U postgres -W -F c `
+    -f "backend_architecture_review_backup.dump" `
+    backend_architecture_review
+```
+
+Inspect the backup archive:
+
+```powershell
+pg_restore --list "backend_architecture_review_backup.dump"
+```
+
+The database backup should be stored securely, separately from the application source code, and protected with appropriate access controls.
+
+## 20.2 Recovery Testing
+
+A backup should not be considered reliable until its restoration has been tested.
+
+The development environment was used to create a custom-format PostgreSQL backup and restore it into a separate test database. Verification found 25 public base tables and 14 booking records in the restored database.
+
+This confirms that the tested archive could be restored sufficiently to verify those objects and records. It does not guarantee recovery from every possible production failure.
+
+## 20.3 Production Recommendations
+
+For a production deployment:
+
+1. Schedule automated backups according to business recovery requirements.
+2. Store backup copies in a separate, access-controlled location.
+3. Encrypt backups where appropriate and protect database credentials.
+4. Define a **Recovery Point Objective (RPO)**: the maximum acceptable amount of data loss measured in time.
+5. Define a **Recovery Time Objective (RTO)**: the target time to restore service after an incident.
+6. Periodically test restoration and document the recovery procedure.
+7. Consider point-in-time recovery using base backups and archived write-ahead logs (WAL) when the required recovery objectives justify it.
+8. Monitor backup jobs and alert on failures.
+
+**Current status:** A local backup and a test restoration have been performed. Automated scheduling, off-site storage, and point-in-time recovery should be treated as future production work unless they have been separately configured and verified.
+
+# 21. PostgreSQL Replication
+
+PostgreSQL replication maintains copies of database data on additional database servers. It can improve availability and help distribute read traffic when configured appropriately.
+
+A possible production architecture is:
+
+- **Primary database:** Handles writes, such as booking creation, booking status changes, and payment records.
+- **Read replica:** Handles eligible read-only queries, such as service browsing and reporting.
+- **Monitoring and failover:** Detects database problems and supports recovery according to a tested operational procedure.
+
+Replication considerations:
+
+1. A replica may lag behind the primary database.
+2. Queries that require immediately updated data should use the primary where necessary.
+3. Replication does not replace independent backups.
+4. Failover and recovery procedures must be tested.
+
+**Current status:** Replication is a proposed production capability. It must not be considered implemented until a replica has been configured and verified.
+
+# 22. Database Design Verification
+
+The following checks have been performed in the development environment:
+
+| Check | Evidence |
+|---|---|
+| Django system check | Previously reported no issues |
+| Database engine | PostgreSQL |
+| Migration consistency | Previously reported no changes detected |
+| Backup creation | Custom-format PostgreSQL backup created |
+| Backup inspection | `pg_restore --list` inspected the archive |
+| Restore verification | A separate test database contained 25 public base tables and 14 booking records |
+
+These checks verify the basic configuration and selected backup-recovery behavior. They do not prove production-scale performance or a complete disaster-recovery capability.
+
+Further production validation should include realistic load tests, query-plan analysis, backup scheduling, monitoring, and tested recovery procedures.
+
+# 23. Conclusion
+
+PostgreSQL provides persistent relational storage for the mobile service booking backend. Database constraints, indexes, transactions, and appropriate locking help maintain data integrity under concurrent requests.
+
+Redis can reduce database load for suitable frequently accessed data. To prepare for one million registered users, the architecture should also consider connection pooling, query optimization, pagination, monitoring, load testing, secure backups, and tested recovery procedures.
+
+Read replicas and automated failover should be introduced when justified by measured performance and availability requirements. The target of one million users must be validated through realistic capacity testing rather than assumed from the database choice alone.
