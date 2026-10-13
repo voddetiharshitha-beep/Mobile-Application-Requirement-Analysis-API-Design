@@ -1,4 +1,4 @@
-﻿# Redis Caching and Scalability Architecture
+# Redis Caching and Scalability Architecture
 
 ## 1. Objective
 
@@ -292,3 +292,21 @@ Validate the caching strategy with automated tests for:
 Monitor cache hit rate, miss rate, eviction count, Redis memory use, regeneration latency, and PostgreSQL query load.
 
 Performance improvements should be demonstrated by comparing repeated requests with caching disabled and enabled under equivalent test conditions.
+## 8. Caching Strategy: Implementation Status
+
+This project implements and tests Redis caching for service-list API responses.
+
+| Data category | Recommended strategy | Current status |
+|---|---|---|
+| Popular services | Cache service-list responses with a short TTL. | Implemented and tested |
+| Service categories | Cache for 5-15 minutes when a category endpoint is available; invalidate after category changes. | Recommended; not separately implemented |
+| User session data | Use an appropriate session backend and respect session expiry, logout, and security changes. | Redis session caching not explicitly configured |
+| Frequently accessed public data | Cache stable public data for approximately 1-5 minutes, depending on freshness needs. | Strategy documented; separate caches not implemented |
+
+### Cache correctness and resilience
+
+- **TTL:** Service-list entries expire after 60 seconds.
+- **Invalidation:** Service creation, update, and deletion trigger service-list cache invalidation.
+- **Cache stampede:** A Redis lock helps prevent multiple workers from regenerating the same missing service-list entry simultaneously.
+- **Cache consistency:** PostgreSQL remains the source of truth. If Redis invalidation fails, stale responses may remain until the cache entry expires.
+- **Scope:** Category and session caching are recommendations, not claims of implemented or tested functionality.
