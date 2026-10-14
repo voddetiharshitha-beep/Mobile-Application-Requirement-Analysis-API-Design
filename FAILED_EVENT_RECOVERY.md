@@ -168,10 +168,10 @@ A broker failure before task submission and a task failure after execution begin
 
 ## 7. Verification Checklist
 
-- [] Failure reason identified from logs and related records.
-- [] Underlying infrastructure or data problem corrected.
-- [] Existing notification checked before replay.
-- [] Original task arguments and correlation ID verified.
-- [] Replay result checked in worker logs and the database.
-- [] Duplicate notification records ruled out.
-- [] Recovery outcome documented.
+- [ ] Failure reason identified from logs and related records.
+- [ ] Underlying infrastructure or data problem corrected.
+- [ ] Existing notification checked before replay.
+- [ ] Original task arguments and correlation ID verified.
+- [ ] Replay result checked in worker logs and the database.
+- [ ] Duplicate notification records ruled out.
+- [ ] Recovery outcome documented.
