@@ -225,3 +225,75 @@ class IncrementalBookingSyncTests(TestCase):
             "sync",
             second_response.data,
         )
+
+    def test_sync_after_reconnection_returns_new_server_changes(self):
+        """
+        Simulate a client reconnecting after being offline.
+
+        The client saves its previous sync checkpoint,
+        then requests changes after reconnecting.
+        """
+
+        # Create the booking available during the initial sync.
+        existing_booking = self.create_booking(1)
+
+        initial_response = self.client.get(
+            "/api/v1/sync/bookings/"
+        )
+
+        self.assertEqual(
+            initial_response.status_code,
+            200,
+        )
+
+        initial_sync = initial_response.data["sync"]
+
+        # Save the server-provided synchronization checkpoint.
+        checkpoint = initial_sync["synced_at"]
+
+        initial_ids = {
+            item["id"]
+            for item in initial_response.data["data"]
+        }
+
+        self.assertIn(
+            str(existing_booking.id),
+            initial_ids,
+        )
+
+        # Simulate server-side data changing while the
+        # mobile client is offline.
+        changed_booking = self.create_booking(2)
+
+        # The client reconnects and asks for changes
+        # after its saved checkpoint.
+        recovery_response = self.client.get(
+            "/api/v1/sync/bookings/",
+            {
+                "updated_after": checkpoint,
+            },
+        )
+
+        self.assertEqual(
+            recovery_response.status_code,
+            200,
+        )
+
+        recovered_ids = {
+            item["id"]
+            for item in recovery_response.data["data"]
+        }
+
+        self.assertIn(
+            str(changed_booking.id),
+            recovered_ids,
+        )
+
+        self.assertNotIn(
+            str(existing_booking.id),
+            recovered_ids,
+        )
+
+        self.assertTrue(
+            recovery_response.data["success"]
+        )
