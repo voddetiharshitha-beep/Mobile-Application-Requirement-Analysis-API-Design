@@ -281,6 +281,7 @@ payment secrets, or unnecessary personal information.
 Useful operational measurements include task failure count, retry count,
 retry exhaustion count, event processing duration, notification delivery
 outcomes, and API error rates.
+
 ## 11. Day 1 Verification Checklist
 
 Use this checklist when investigating and recovering a failed event or notification task.
@@ -303,6 +304,6 @@ These behaviors must be verified through source-code inspection and automated te
 
 The manual notification-task recovery procedure is documented in [FAILED_EVENT_RECOVERY.md](FAILED_EVENT_RECOVERY.md).
 
-It covers failure investigation, duplicate checks, safe task replay, and post-recovery verification.
+It covers failure investigation, duplicate checks, task-argument verification, controlled replay, and recording the recovery outcome.
 
 This is a manual recovery procedure. It must not be described as an automated dead-letter queue unless such a mechanism has been implemented and verified.
