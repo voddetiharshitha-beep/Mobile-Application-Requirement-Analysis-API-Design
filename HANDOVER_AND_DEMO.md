@@ -10,7 +10,7 @@ The following checks were completed during the current validation session:
 
 | Check | Result |
 |---|---|
-| Django system check (`python manage.py check`) | Passed — no issues reported |
+| Django system check (`python manage.py check`) | Passed - no issues reported |
 | Focused reliability, WebSocket, notification queue-resilience, and observability tests | 30 tests passed |
 | Individual WebSocket booking-status update test | 1 test passed |
 | Booking/regression, notification, and payment journey tests | 13 tests passed |
