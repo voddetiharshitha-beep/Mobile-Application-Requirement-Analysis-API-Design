@@ -75,6 +75,7 @@ class JSONLogFormatter(logging.Formatter):
             "http_path",
             "status_code",
             "duration_ms",
+            "correlation_id",
         ):
             if hasattr(record, field):
                 data[field] = getattr(record, field)

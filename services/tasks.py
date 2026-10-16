@@ -4,6 +4,8 @@ from importlib import import_module
 
 from django.db import InterfaceError, OperationalError
 
+from config.metrics import record_notification_event
+
 try:
     shared_task = import_module("celery").shared_task
 except ModuleNotFoundError:
@@ -44,22 +46,35 @@ def create_notification(
     service_id=None,
     correlation_id=None,
 ):
-    """Create a deduplicated notification record."""
+    """Create a deduplicated notification and record its processing outcome."""
+    try:
+        if service_id is not None:
+            notification, created = Notification.objects.get_or_create(
+                recipient_id=recipient_id,
+                service_id=service_id,
+                notification_type=notification_type,
+                defaults={"message": message},
+            )
+        else:
+            notification, created = Notification.objects.get_or_create(
+                recipient_id=recipient_id,
+                booking_id=booking_id,
+                notification_type=notification_type,
+                defaults={"message": message},
+            )
+    except RETRYABLE_DATABASE_ERRORS:
+        record_notification_event("processing", "retryable_error")
+        logger.exception(
+            "Notification database operation failed; task will retry",
+            extra={
+                "correlation_id": correlation_id or "-",
+                "notification_type": str(notification_type),
+            },
+        )
+        raise
 
-    if service_id is not None:
-        notification, created = Notification.objects.get_or_create(
-            recipient_id=recipient_id,
-            service_id=service_id,
-            notification_type=notification_type,
-            defaults={"message": message},
-        )
-    else:
-        notification, created = Notification.objects.get_or_create(
-            recipient_id=recipient_id,
-            booking_id=booking_id,
-            notification_type=notification_type,
-            defaults={"message": message},
-        )
+    outcome = "created" if created else "duplicate"
+    record_notification_event("processing", outcome)
 
     logger.info(
         "Notification record processed",
@@ -85,42 +100,57 @@ def notify_saved_customers_service_unavailable(
     service_id,
     correlation_id=None,
 ):
-    """Create deduplicated notifications for saved-service customers."""
+    """Create deduplicated saved-service notifications and record outcomes."""
+    try:
+        service = Service.objects.filter(id=service_id).first()
 
-    service = Service.objects.filter(id=service_id).first()
+        if service is None:
+            record_notification_event("processing", "failed")
+            logger.warning(
+                "Saved-service notification skipped: service not found",
+                extra={
+                    "correlation_id": correlation_id or "-",
+                    "service_id": str(service_id),
+                },
+            )
+            return []
 
-    if service is None:
-        logger.warning(
-            "Saved-service notification skipped: service not found",
+        customer_ids = (
+            SavedService.objects
+            .filter(service=service)
+            .values_list("customer_id", flat=True)
+        )
+
+        notification_ids = []
+
+        for customer_id in customer_ids:
+            notification, created = Notification.objects.get_or_create(
+                recipient_id=customer_id,
+                service_id=service.id,
+                notification_type="SAVED_SERVICE_UNAVAILABLE",
+                defaults={
+                    "message": (
+                        f"The saved service '{service.name}' "
+                        "is no longer available."
+                    ),
+                },
+            )
+
+            outcome = "created" if created else "duplicate"
+            record_notification_event("processing", outcome)
+            notification_ids.append(str(notification.id))
+
+    except RETRYABLE_DATABASE_ERRORS:
+        record_notification_event("processing", "retryable_error")
+        logger.exception(
+            "Saved-service notification database operation failed; "
+            "task will retry",
             extra={
                 "correlation_id": correlation_id or "-",
                 "service_id": str(service_id),
             },
         )
-        return []
-
-    customer_ids = (
-        SavedService.objects
-        .filter(service=service)
-        .values_list("customer_id", flat=True)
-    )
-
-    notification_ids = []
-
-    for customer_id in customer_ids:
-        notification, created = Notification.objects.get_or_create(
-            recipient_id=customer_id,
-            service_id=service.id,
-            notification_type="SAVED_SERVICE_UNAVAILABLE",
-            defaults={
-                "message": (
-                    f"The saved service '{service.name}' "
-                    "is no longer available."
-                ),
-            },
-        )
-
-        notification_ids.append(str(notification.id))
+        raise
 
     logger.info(
         "Saved-service notification records processed",

@@ -1,12 +1,24 @@
-from django.db import IntegrityError, transaction
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from django.db import IntegrityError, transaction
+
+from config.middleware import request_id_context
 
 from .models import (
     Booking,
     BookingIdempotencyKey,
 )
 from .notification_service import send_notification
+
+
+def _current_correlation_id():
+    """Return the current request ID for event tracing."""
+    request_id = request_id_context.get()
+
+    if not request_id or request_id == "-":
+        return None
+
+    return request_id
 
 
 def create_booking(
@@ -139,6 +151,7 @@ def cancel_booking(*, booking):
             "message": (
                 "Booking status changed to cancelled."
             ),
+            "correlation_id": _current_correlation_id(),
         },
     )
 
@@ -207,6 +220,9 @@ def update_booking_status(
                     "message": (
                         f"Booking status changed to "
                         f"{locked_booking.status}."
+                    ),
+                    "correlation_id": (
+                        _current_correlation_id()
                     ),
                 },
             )

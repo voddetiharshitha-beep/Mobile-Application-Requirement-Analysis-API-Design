@@ -1,4 +1,3 @@
-
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.contrib.auth.models import AnonymousUser
@@ -146,11 +145,17 @@ class BookingStatusConsumer(AsyncJsonWebsocketConsumer):
             return
 
     async def booking_status_update(self, event):
-        await self.send_json(
-            {
-                "event": "booking.status_changed",
-                "booking_id": event["booking_id"],
-                "status": event["status"],
-                "message": event["message"],
-            }
-        )
+        """Forward booking updates and optional correlation IDs."""
+        payload = {
+            "event": "booking.status_changed",
+            "booking_id": event["booking_id"],
+            "status": event["status"],
+            "message": event["message"],
+        }
+
+        correlation_id = event.get("correlation_id")
+
+        if correlation_id:
+            payload["correlation_id"] = correlation_id
+
+        await self.send_json(payload)

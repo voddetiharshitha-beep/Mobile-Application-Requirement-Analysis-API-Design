@@ -1,10 +1,14 @@
+
 from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
+from celery.exceptions import Retry
 from django.contrib.auth.models import User
 from django.db import InterfaceError, OperationalError
 from django.test import TransactionTestCase
 
+from config.metrics import NOTIFICATION_EVENTS
 from services.models import (
     Booking,
     Category,
@@ -96,6 +100,18 @@ class ReliableNotificationTaskTests(TransactionTestCase):
             "Your booking has been created.",
         )
 
+        created_counter = NOTIFICATION_EVENTS.labels(
+            "processing",
+            "created",
+        )
+        duplicate_counter = NOTIFICATION_EVENTS.labels(
+            "processing",
+            "duplicate",
+        )
+
+        created_before = created_counter._value.get()
+        duplicate_before = duplicate_counter._value.get()
+
         first_result = create_notification.apply(
             args=task_args,
             kwargs={
@@ -121,3 +137,72 @@ class ReliableNotificationTaskTests(TransactionTestCase):
         ).count()
 
         self.assertEqual(notification_count, 1)
+        self.assertEqual(
+            created_counter._value.get(),
+            created_before + 1,
+        )
+        self.assertEqual(
+            duplicate_counter._value.get(),
+            duplicate_before + 1,
+        )
+
+    def test_transient_database_failure_retries_and_recovers(self):
+        task_args = (
+            self.customer.pk,
+            str(self.booking.pk),
+            "BOOKING_CREATED",
+            "Your booking has been created.",
+        )
+
+        original_get_or_create = Notification.objects.get_or_create
+
+        retry_counter = NOTIFICATION_EVENTS.labels(
+            "processing",
+            "retryable_error",
+        )
+        retry_before = retry_counter._value.get()
+
+        with patch(
+            "services.tasks.Notification.objects.get_or_create",
+            side_effect=[
+                OperationalError("Temporary database outage"),
+                original_get_or_create,
+            ],
+        ) as mocked_get_or_create:
+            with self.assertRaises(Retry):
+                create_notification.apply(
+                    args=task_args,
+                    kwargs={
+                        "correlation_id": "recovery-test-001",
+                    },
+                    throw=True,
+                ).get()
+
+        self.assertEqual(mocked_get_or_create.call_count, 1)
+        self.assertEqual(
+            retry_counter._value.get(),
+            retry_before + 1,
+        )
+
+        with patch(
+            "services.tasks.Notification.objects.get_or_create",
+            wraps=original_get_or_create,
+        ) as mocked_recovery:
+            result = create_notification.apply(
+                args=task_args,
+                kwargs={
+                    "correlation_id": "recovery-test-001",
+                },
+                throw=True,
+            ).get()
+
+        self.assertTrue(result)
+        mocked_recovery.assert_called_once()
+
+        notifications = Notification.objects.filter(
+            recipient=self.customer,
+            booking=self.booking,
+            notification_type="BOOKING_CREATED",
+        )
+
+        self.assertEqual(notifications.count(), 1)

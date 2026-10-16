@@ -1,11 +1,8 @@
-# Redis Caching and Scalability Architecture
+﻿# Redis Caching and Scalability Architecture
 
 ## 1. Objective
 
-This document describes the Redis caching strategy, cache invalidation,
-performance measurements, rate-limiting review, concurrent-request testing,
-and distributed-lock testing for the Django REST Framework mobile service
-booking API.
+This document describes the Redis architecture, service-list caching, TTL, cache invalidation, performance measurements, rate-limiting review, concurrent-request testing, distributed-lock testing, and operational considerations for the Django REST Framework mobile service booking API.
 
 ## 2. Redis Architecture
 
@@ -18,18 +15,17 @@ Redis is configured as the Django cache backend through `django-redis`.
 - Service-list cache timeout: 60 seconds
 - Cached resource: Service-list API responses
 
-Redis is also used by the project's asynchronous notification and Channels
-infrastructure. The cache and other Redis workloads should be monitored and
-configured appropriately for deployment.
+Redis is also used by the project's asynchronous notification and Channels infrastructure. The cache and other Redis workloads should be monitored and configured appropriately for deployment.
 
-## 3. Cache Strategy
+PostgreSQL remains the authoritative source for persistent application data.
 
-The service-list endpoint uses the cache key pattern:
+## 3. Service-List Cache Strategy
+
+The service-list endpoint uses this cache-key pattern:
 
 `service_list:{request.get_full_path()}`
 
-Different query strings and pagination parameters can have separate cache
-entries.
+Different query strings and pagination parameters can have separate cache entries.
 
 ### Cache miss
 
@@ -43,57 +39,61 @@ entries.
 
 1. The API receives a repeated request.
 2. Django finds the matching cached response.
-3. The cached response is returned without repeating the service-list
-   database queries.
+3. The cached response is returned without repeating the service-list database queries.
 
-## 4. TTL and Cache Invalidation
+### Cache invalidation
+
+The service layer invalidates service-list cache entries after service creation, update, and deletion.
+
+Invalidation uses the `service_list:*` key pattern with the Redis cache backend's `delete_pattern()` method.
+
+This prevents normal service mutations from leaving old service-list responses cached until the TTL expires. The TTL provides a fallback for eventual expiration. Cache invalidation should also cover other code paths that change service data.
+
+## 4. TTL and Cache Consistency
 
 The service-list cache timeout is configured as 60 seconds.
 
-The service layer invalidates service-list cache entries after service
-creation, update, and deletion.
+Time to Live (TTL) defines how long a cached entry remains valid before it expires. Repeated requests within that period can reuse the cached result. After expiration, the application obtains fresh data and caches it again.
 
-Invalidation uses the `service_list:*` key pattern with the Redis cache
-backend's `delete_pattern()` method.
+TTL limits how long cached data may remain stale, but it does not guarantee immediate freshness. Explicit invalidation is needed when relevant data changes.
 
-This prevents normal service mutations from leaving old service-list
-responses cached until the TTL expires. The TTL provides a fallback for
-eventual expiration.
+For service listings, short-lived eventual consistency may be acceptable. For booking status, payment status, authorization decisions, and other critical operations, the application must validate against authoritative data rather than relying solely on potentially stale cache entries.
+
+Where transactions are involved, cache invalidation should occur after successful database commit. If invalidation fails, monitoring and recovery mechanisms should help prevent stale data from persisting unnoticed.
 
 ## 5. Performance Comparison
 
-Test endpoint:
+**Test endpoint:**
 
 `GET /api/v1/services/?page=1`
 
-Latest recorded local benchmark:
+The following results were recorded during the latest local benchmark.
 
 | Metric | Cold cache | Warm cache average |
 |---|---:|---:|
-| Response time | 183.09 ms | 3.63 ms |
-| Database queries | 2 | 0 |
-| HTTP status | 200 | 200 |
+| Response time | 222.91 ms | 3.82 ms |
+| Database queries | 2 | 0 per request |
+| HTTP status | 200 | 200 for all five requests |
 
-The five warm-request times were:
+**Individual warm-request response times:**
 
-- 2.80 ms
-- 2.78 ms
-- 3.47 ms
-- 6.27 ms
-- 2.83 ms
+- 3.85 ms
+- 3.54 ms
+- 3.94 ms
+- 4.12 ms
+- 3.67 ms
 
-The measured average response-time reduction was approximately 98.02%.
+The average warm-cache response time was **3.82 ms**, compared with **222.91 ms** for the cold-cache request.
 
-These results are from a local benchmark and are not a guarantee of
-production performance. Results can vary with system load, cache state,
-database state, and the test environment.
+The measured response-time reduction was approximately **98.28%**.
+
+These are local benchmark results, not a guarantee of production performance. Results may vary depending on system load, cache state, database state, and the test environment.
 
 ## 6. Redis Distributed-Lock Test
 
-Redis lock support was verified using the configured `django-redis`
-cache backend.
+Redis lock support was verified using the configured `django-redis` cache backend.
 
-An automated test is located at:
+Automated test:
 
 `services/tests/test_redis_lock.py`
 
@@ -110,19 +110,11 @@ Run the test with:
 
 `python manage.py test services.tests.test_redis_lock -v 2`
 
-This test verifies basic lock acquisition, contention, and release against
-Redis. It does not establish that a production business operation is
-protected by a Redis lock.
+The service-list cache regeneration path also uses a Redis lock to coordinate cache population when the cache is empty. The lock test verifies basic acquisition, contention, and release. These results do not establish correctness under every production workload or failure condition.
 
-The booking workflow currently has separate database-level safeguards:
-database transactions, booking idempotency constraints, and row locking
-for booking-status updates. A Redis lock has not yet been integrated into
-a production business operation.
+**Scope limitation:** Redis distributed locking is not currently integrated into booking or payment business operations. Those workflows rely on their existing database and transaction safeguards, including booking idempotency constraints and row locking for booking-status updates.
 
-Before integration, the chosen operation must have a clearly defined
-concurrency risk, lock key, timeout, release behavior, failure handling,
-and database consistency strategy. Redis locking must not replace database
-constraints or transaction safeguards.
+Any future business-operation lock should have a clearly defined concurrency risk, lock key, bounded timeout, safe release behavior, failure handling, and database consistency strategy. Redis locking must not replace database constraints or transaction safeguards.
 
 ## 7. Concurrent-Request Testing
 
@@ -130,8 +122,9 @@ Test endpoint:
 
 `GET /api/v1/services/?page=1`
 
-The service-list cache was populated before the concurrent requests were
-issued. The local test used 20 APIClient requests across 5 worker threads.
+### Warm-cache concurrency
+
+The service-list cache was populated before the concurrent requests were issued. The local test used 20 APIClient requests across 5 worker threads.
 
 | Metric | Result |
 |---|---:|
@@ -139,15 +132,30 @@ issued. The local test used 20 APIClient requests across 5 worker threads.
 | Worker threads | 5 |
 | Successful HTTP 200 responses | 20 |
 | Failed requests | 0 |
-| Average response time | 28.41 ms |
-| Fastest response | 2.61 ms |
-| Slowest response | 80.52 ms |
+| Average response time | 42.00 ms |
+| Fastest response | 4.94 ms |
+| Slowest response | 172.78 ms |
 
 All 20 requests returned HTTP 200 in this run.
 
-This is a local concurrent APIClient test, not a full network-level load
-test. Repeated runs, higher concurrency, real HTTP traffic, and latency
-percentiles are needed to evaluate production capacity.
+### Cold-cache concurrency
+
+A separate test cleared the service-list cache before launching five concurrent requests using five worker threads.
+
+| Metric | Result |
+|---|---:|
+| Total requests | 5 |
+| Worker threads | 5 |
+| Successful HTTP 200 responses | 5 |
+| Failed requests | 0 |
+| Average response time | 578.31 ms |
+| Fastest response | 450.06 ms |
+| Slowest response | 672.75 ms |
+| Total database queries | 2 |
+
+All five requests succeeded. The first request recorded two database queries, while the other four recorded zero queries. This result is consistent with coordinated cache regeneration during this run, but it does not prove behavior under every load or failure condition.
+
+These are local APIClient benchmarks, not full network-level load tests. Repeated runs, higher concurrency, real HTTP traffic, and latency percentiles are needed to evaluate production capacity.
 
 ## 8. Rate-Limiting Review
 
@@ -161,124 +169,43 @@ Configured rates to verify against settings and the corresponding views:
 - Booking: 5 requests per minute
 - Payment: 5 requests per minute
 
-The throttle scopes and view assignments should remain consistent, and
-each protected endpoint should have independent positive and negative
-tests.
+The throttle scopes, configured rates, and view assignments should remain consistent. Each protected endpoint should have independent positive and negative tests.
 
-Rate throttling is an application-level safeguard. It does not replace
-authentication, authorization, payment security, or infrastructure-level
-protection.
+Rate throttling is an application-level safeguard. It does not replace authentication, authorization, payment security, or infrastructure-level protection.
 
-## 9. Operational Considerations
+## 9. Recommended Caching Strategy
 
-- Keep Redis credentials and connection settings in environment variables.
-- Monitor Redis availability, memory usage, latency, and evictions.
-- Choose an appropriate Redis memory policy for the deployment workload.
-- Review cache-key growth and invalidation behavior.
-- Avoid caching sensitive or user-specific responses under shared keys.
-- Test and document application behavior when Redis is unavailable.
-- Use repeated load tests and latency-percentile measurements before
-  production deployment.
-- Review Redis authentication, networking, persistence, and high
-  availability requirements.
-- Ensure distributed locks have bounded timeouts and safe release behavior.
-- Retain database constraints and transactions for critical business rules.
+The following table distinguishes the current service-list implementation from recommendations that have not been separately implemented.
 
-## 10. Conclusion and Remaining Work
-
-The local implementation demonstrates service-list caching, a 60-second
-TTL, cache invalidation after service mutations, reduced warm-cache latency,
-basic Redis lock contention, and successful handling of 20 concurrent
-service-list requests.
-
-The standalone Redis lock test passes, but a production business operation
-has not yet been integrated with a Redis lock. That requirement remains
-open until a suitable operation is selected, implemented safely, and tested
-under concurrent requests.
-
-Remaining work includes:
-- Integrate and test a bounded Redis lock for a suitable business operation.
-- Test and document application behavior when Redis is unavailable.
-- Review logging and observability for critical application components.
-- Repeat concurrency and performance tests and record the results.
-- Review the working tree before committing changes.
-# Caching Strategy
-
-## 1. Caching Objectives
-
-Redis is used to reduce repeated database queries, improve API response times, and reduce load on PostgreSQL. Cache entries should have defined expiration periods and invalidation rules.
-
-The PostgreSQL database remains the authoritative source for persistent application data.
-
-## 2. What Should Be Cached?
-
-| Data | Caching Strategy | Suggested TTL | Invalidation |
+| Data category | Recommended strategy | Suggested TTL | Current status and invalidation |
 |---|---|---|---|
-| Popular services | Cache frequently requested service-list responses | 60 seconds | Invalidate when a service is created, updated, or deleted |
-| Service categories | Cache category lists that change infrequently | 5–15 minutes | Invalidate when a category is created, updated, or deleted |
-| User session data | Cache only suitable session or authentication-related data | Based on session expiry | Invalidate on logout, expiration, or relevant security changes |
-| Frequently accessed data | Cache stable, read-heavy data such as public service details | 1–5 minutes | Invalidate when the underlying data changes |
-| Bookings and payments | Avoid treating cached values as authoritative | Not applicable by default | Read current database state for critical operations |
+| Service lists | Cache frequently requested service-list responses | 60 seconds | Implemented and tested; invalidate after service creation, update, and deletion |
+| Service categories | Cache category lists that change infrequently | 5–15 minutes | Recommendation; separate cache not confirmed |
+| User session data | Use an appropriate session backend and respect session expiry and logout | Based on session expiry | Redis session caching is not explicitly configured |
+| Frequently accessed public data | Cache stable, read-heavy data such as public service details | 1–5 minutes | Recommendation; separate cache not implemented |
+| Bookings and payments | Do not treat cached values as authoritative | Not applicable by default | Read current database state for critical operations |
 
-TTL values are initial recommendations, not measured performance requirements. They should be adjusted using actual access patterns, freshness requirements, and performance tests.
+TTL values for resources other than the service list are recommendations, not measured performance requirements. They should be adjusted using actual access patterns, freshness requirements, and performance tests.
 
 Sensitive information, including passwords, access tokens, and payment secrets, must not be cached casually. Any session or authentication cache must use appropriate access controls, expiration, and invalidation.
 
-## 3. Time to Live (TTL)
-
-Time to Live (TTL) defines how long a cached entry remains valid before it expires.
-
-For example, a service-list cache may use a TTL of 60 seconds. Repeated requests within that period can reuse the cached result. After expiration, the application obtains fresh data and caches it again.
-
-Benefits include:
-
-- Limiting how long cached data can remain stale.
-- Automatically removing expired entries.
-- Reducing repeated database queries.
-
-TTL does not guarantee immediate freshness. If data changes before the TTL expires, invalidation may be necessary.
-
-## 4. Cache Invalidation
-
-Cache invalidation removes or refreshes cached data after the underlying database data changes.
-
-For service listings, the application should invalidate affected cache entries after successful service creation, update, or deletion.
-
-Recommended practices:
-
-1. Perform the database operation successfully before invalidating its cache.
-2. Invalidate all relevant cache variants, including entries for different query parameters or pagination.
-3. Use consistent cache-key naming.
-4. Handle cache failures without accidentally reporting a failed database write when the database transaction actually succeeded.
-5. Where strict coordination is required, use transaction-aware invalidation or a reliable post-commit mechanism.
-
-Cache invalidation must cover every code path that changes the underlying data, including administrative operations and background tasks.
-
-## 5. Cache Stampede
+## 10. Cache Stampede Prevention
 
 A cache stampede occurs when a popular cache entry expires and many simultaneous requests attempt to regenerate it. This can send a sudden burst of queries to PostgreSQL.
 
-Mitigation strategies include:
+Potential mitigation strategies include:
 
 - **Distributed locking:** Allow one worker to regenerate a particular cache entry while other workers wait briefly or use a permitted fallback.
 - **TTL jitter:** Add a small random variation to expiration times so many entries do not expire simultaneously.
-- **Stale-while-revalidate:** Serve a previously cached value briefly while one worker refreshes it, where the data freshness requirements allow this.
+- **Stale-while-revalidate:** Serve a previously cached value briefly while one worker refreshes it, where freshness requirements allow.
 - **Request coalescing:** Combine concurrent requests for the same missing cache key into one regeneration operation.
 - **Monitoring:** Track cache misses, regeneration duration, Redis errors, and database load.
 
+The service-list cache regeneration lock is part of the current implementation. The other strategies above should be treated as recommendations unless separately implemented and tested.
+
 A lock should have a bounded expiry and safe release behavior. It must not remain held indefinitely if a worker crashes.
 
-## 6. Cache Consistency
-
-Cache consistency describes how closely cached data reflects the current database state.
-
-This backend uses PostgreSQL as the source of truth and Redis as a performance optimization. Cache invalidation and expiration reduce staleness, but they do not automatically provide strong consistency.
-
-For public service listings, short-lived eventual consistency may be acceptable. For booking status, payment status, authorization decisions, and other critical operations, the application should validate against authoritative data and must not rely solely on potentially stale cache entries.
-
-When using a transaction, cache invalidation should occur only after the database changes have committed successfully. If invalidation fails, monitoring and a recovery mechanism should help prevent stale data from persisting unnoticed.
-
-## 7. Testing and Monitoring
+## 11. Testing and Monitoring
 
 Validate the caching strategy with automated tests for:
 
@@ -292,21 +219,32 @@ Validate the caching strategy with automated tests for:
 Monitor cache hit rate, miss rate, eviction count, Redis memory use, regeneration latency, and PostgreSQL query load.
 
 Performance improvements should be demonstrated by comparing repeated requests with caching disabled and enabled under equivalent test conditions.
-## 8. Caching Strategy: Implementation Status
 
-This project implements and tests Redis caching for service-list API responses.
+## 12. Operational Considerations
 
-| Data category | Recommended strategy | Current status |
-|---|---|---|
-| Popular services | Cache service-list responses with a short TTL. | Implemented and tested |
-| Service categories | Cache for 5-15 minutes when a category endpoint is available; invalidate after category changes. | Recommended; not separately implemented |
-| User session data | Use an appropriate session backend and respect session expiry, logout, and security changes. | Redis session caching not explicitly configured |
-| Frequently accessed public data | Cache stable public data for approximately 1-5 minutes, depending on freshness needs. | Strategy documented; separate caches not implemented |
+- Keep Redis credentials and connection settings in environment variables.
+- Monitor Redis availability, memory usage, latency, and evictions.
+- Choose an appropriate Redis memory policy for the deployment workload.
+- Review cache-key growth and invalidation behavior.
+- Avoid caching sensitive or user-specific responses under shared keys.
+- Test and document application behavior when Redis is unavailable.
+- Use repeated load tests and latency-percentile measurements before production deployment.
+- Review Redis authentication, networking, persistence, and high-availability requirements.
+- Ensure distributed locks have bounded timeouts and safe release behavior.
+- Retain database constraints and transactions for critical business rules.
 
-### Cache correctness and resilience
+## 13. Conclusion and Remaining Work
 
-- **TTL:** Service-list entries expire after 60 seconds.
-- **Invalidation:** Service creation, update, and deletion trigger service-list cache invalidation.
-- **Cache stampede:** A Redis lock helps prevent multiple workers from regenerating the same missing service-list entry simultaneously.
-- **Cache consistency:** PostgreSQL remains the source of truth. If Redis invalidation fails, stale responses may remain until the cache entry expires.
-- **Scope:** Category and session caching are recommendations, not claims of implemented or tested functionality.
+The local implementation demonstrates service-list caching with a 60-second TTL, cache invalidation after service mutations, reduced warm-cache latency in the recorded benchmark, basic Redis lock contention testing, and successful warm-cache and cold-cache concurrent-request runs.
+
+The measured warm-cache response-time reduction was approximately 98.28% in the recorded local benchmark. This figure should not be treated as a production performance guarantee.
+
+The Redis lock coordinates service-list cache regeneration. A Redis lock has not been integrated into a booking or payment business operation; that remains a separate decision requiring a clearly justified concurrency use case.
+
+Remaining work:
+
+- Test and document application behavior when Redis is unavailable.
+- Review logging and observability for critical application components.
+- Repeat concurrency and performance tests under additional loads.
+- Verify rate-limiting settings and endpoint-specific tests.
+- Review the working tree before committing changes.

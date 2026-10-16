@@ -12,6 +12,7 @@ from django.utils.crypto import get_random_string
 from config.asgi import application
 from services.booking_service import (
     cancel_booking,
+    request_id_context,
     update_booking_status,
 )
 from services.models import (
@@ -163,6 +164,7 @@ class BookingWebSocketTests(TransactionTestCase):
                 "message": (
                     "Booking status changed to confirmed."
                 ),
+                "correlation_id": "websocket-trace-test-001",
             },
         )
 
@@ -183,24 +185,18 @@ class BookingWebSocketTests(TransactionTestCase):
             "Booking status changed to confirmed.",
         )
 
+        # Verify correlation ID propagation to the WebSocket client.
+        self.assertEqual(
+            response["correlation_id"],
+            "websocket-trace-test-001",
+        )
+
         await communicator.disconnect()
 
     async def test_other_user_cannot_connect_to_booking(self):
         communicator, connected = await self.connect_as_user(
             self.other_user
         )
-
-        self.assertFalse(connected)
-
-        await communicator.disconnect()
-
-    async def test_anonymous_user_cannot_connect(self):
-        communicator = WebsocketCommunicator(
-            application,
-            f"/ws/bookings/{self.booking.id}/",
-        )
-
-        connected, _ = await communicator.connect()
 
         self.assertFalse(connected)
 
@@ -224,12 +220,18 @@ class BookingWebSocketTests(TransactionTestCase):
             "connected",
         )
 
-        await sync_to_async(
-            update_booking_status
-        )(
-            booking=self.booking,
-            new_status="confirmed",
-        )
+        correlation_id = "booking-event-trace-001"
+        token = request_id_context.set(correlation_id)
+
+        try:
+            await sync_to_async(
+                update_booking_status
+            )(
+                booking=self.booking,
+                new_status="confirmed",
+            )
+        finally:
+            request_id_context.reset(token)
 
         response = await communicator.receive_json_from()
 
@@ -247,6 +249,25 @@ class BookingWebSocketTests(TransactionTestCase):
             response["message"],
             "Booking status changed to confirmed.",
         )
+
+        self.assertEqual(
+            response["correlation_id"],
+            correlation_id,
+        )
+
+        await communicator.disconnect()
+
+    async def test_anonymous_user_cannot_connect(self):
+        communicator = WebsocketCommunicator(
+            application,
+            f"/ws/bookings/{self.booking.id}/",
+        )
+
+        connected, _ = await communicator.connect(
+            timeout=10,
+        )
+
+        self.assertFalse(connected)
 
         await communicator.disconnect()
 

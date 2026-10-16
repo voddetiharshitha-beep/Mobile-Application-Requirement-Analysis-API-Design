@@ -1,15 +1,13 @@
-
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.test import TestCase, override_settings
+from rest_framework import status
 from rest_framework.test import APIClient
 
 from services.models import Category, Provider, Service
-from unittest.mock import patch
-
-from rest_framework import status
 
 
 @override_settings(
@@ -61,6 +59,43 @@ class ServiceCacheAPITest(TestCase):
     def tearDown(self):
         cache.clear()
 
+    def test_service_list_caps_requested_page_size_at_100(self):
+        cache.clear()
+
+        # Create 100 additional services.
+        for index in range(100):
+            Service.objects.create(
+                name=f"Pagination Service {index}",
+                description="Service for pagination testing",
+                location="Hyderabad",
+                price=Decimal("500.00"),
+                status=True,
+                category=self.category,
+                provider=self.provider,
+            )
+
+        # Request more than the maximum allowed page size.
+        response = self.client.get(
+            self.url,
+            {"page_size": 1000},
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        # The maximum page size should be 100.
+        self.assertEqual(
+            len(response.data["results"]),
+            100,
+        )
+
+        # There are 101 services, so another page should exist.
+        self.assertIsNotNone(
+            response.data["next"]
+        )
+
     def test_service_list_cache_miss_then_hit(self):
         # The cache should initially be empty.
         self.assertIsNone(
@@ -74,7 +109,7 @@ class ServiceCacheAPITest(TestCase):
 
         self.assertEqual(
             first_response.status_code,
-            200,
+            status.HTTP_200_OK,
         )
 
         # The API should now have cached the response.
@@ -98,7 +133,7 @@ class ServiceCacheAPITest(TestCase):
 
         self.assertEqual(
             second_response.status_code,
-            200,
+            status.HTTP_200_OK,
         )
 
         self.assertEqual(
@@ -113,7 +148,7 @@ class ServiceCacheAPITest(TestCase):
 
         self.assertEqual(
             response.status_code,
-            200,
+            status.HTTP_200_OK,
         )
 
         ttl = cache.ttl(
@@ -138,7 +173,7 @@ class ServiceCacheAPITest(TestCase):
 
         self.assertEqual(
             response.status_code,
-            200,
+            status.HTTP_200_OK,
         )
 
         cached_before = cache.get(
@@ -167,7 +202,7 @@ class ServiceCacheAPITest(TestCase):
 
         self.assertEqual(
             create_response.status_code,
-            201,
+            status.HTTP_201_CREATED,
         )
 
         # Creating a service should invalidate the cache.
@@ -182,7 +217,7 @@ class ServiceCacheAPITest(TestCase):
 
         self.assertEqual(
             refreshed_response.status_code,
-            200,
+            status.HTTP_200_OK,
         )
 
         refreshed_cache = cache.get(
@@ -226,7 +261,7 @@ class ServiceCacheAPITest(TestCase):
 
         self.assertEqual(
             response.status_code,
-            200,
+            status.HTTP_200_OK,
         )
 
         self.assertIsNotNone(
@@ -248,7 +283,7 @@ class ServiceCacheAPITest(TestCase):
 
         self.assertEqual(
             update_response.status_code,
-            200,
+            status.HTTP_200_OK,
         )
 
         # The old cached list should be removed.
@@ -263,7 +298,7 @@ class ServiceCacheAPITest(TestCase):
 
         self.assertEqual(
             refreshed_response.status_code,
-            200,
+            status.HTTP_200_OK,
         )
 
         results = (
@@ -293,7 +328,7 @@ class ServiceCacheAPITest(TestCase):
 
         self.assertEqual(
             response.status_code,
-            200,
+            status.HTTP_200_OK,
         )
 
         self.assertIsNotNone(
@@ -311,7 +346,7 @@ class ServiceCacheAPITest(TestCase):
 
         self.assertEqual(
             delete_response.status_code,
-            204,
+            status.HTTP_204_NO_CONTENT,
         )
 
         # Confirm that the service was deleted from the database.
@@ -333,7 +368,7 @@ class ServiceCacheAPITest(TestCase):
 
         self.assertEqual(
             refreshed_response.status_code,
-            200,
+            status.HTTP_200_OK,
         )
 
         results = (
@@ -353,47 +388,58 @@ class ServiceCacheAPITest(TestCase):
                 item["name"] == "Cache API Service"
                 for item in results
             )
-
         )
 
     @patch(
         "services.views.cache.get",
-        side_effect=ConnectionError("Simulated Redis read failure"),
+        side_effect=ConnectionError(
+            "Simulated Redis read failure"
+        ),
     )
     def test_service_list_works_when_cache_read_fails(
         self,
         mock_cache_get,
     ):
-        response = self.client.get(self.url)
+        response = self.client.get(
+            self.url
+        )
 
         self.assertEqual(
             response.status_code,
             status.HTTP_200_OK,
         )
+
         self.assertTrue(
             Service.objects.filter(
                 pk=self.service.pk
             ).exists()
         )
+
         mock_cache_get.assert_called_once()
 
     @patch(
         "services.views.cache.set",
-        side_effect=ConnectionError("Simulated Redis write failure"),
+        side_effect=ConnectionError(
+            "Simulated Redis write failure"
+        ),
     )
     def test_service_list_works_when_cache_write_fails(
         self,
         mock_cache_set,
     ):
-        response = self.client.get(self.url)
+        response = self.client.get(
+            self.url
+        )
 
         self.assertEqual(
             response.status_code,
             status.HTTP_200_OK,
         )
+
         self.assertTrue(
             Service.objects.filter(
                 pk=self.service.pk
             ).exists()
         )
+
         mock_cache_set.assert_called_once()

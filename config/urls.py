@@ -1,6 +1,6 @@
 
 from services import health_views
-
+from config.metrics import metrics_view
 from django.contrib import admin
 from django.urls import include, path
 from rest_framework_simplejwt.views import TokenRefreshView
@@ -69,5 +69,5 @@ urlpatterns = [
 
 path("health/live/", health_views.liveness_view, name="health-live"),
 path("health/ready/", health_views.readiness_view, name="health-ready"),
-
+path("metrics/", metrics_view, name="prometheus-metrics"),
 ]

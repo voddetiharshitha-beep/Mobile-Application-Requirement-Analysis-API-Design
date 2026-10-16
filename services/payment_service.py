@@ -5,6 +5,8 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.db import transaction
 
+from config.middleware import request_id_context
+
 from .notification_service import send_notification
 from .stripe_service import (
     StripeIntegrationError,
@@ -13,6 +15,16 @@ from .stripe_service import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _current_correlation_id():
+    """Return the current request ID for event tracing."""
+    request_id = request_id_context.get()
+
+    if not request_id or request_id == "-":
+        return None
+
+    return request_id
 
 
 def initiate_payment(*, payment):
@@ -24,7 +36,6 @@ def initiate_payment(*, payment):
     - Stripe receives the amount in the smallest currency unit.
     - The Stripe PaymentIntent ID is stored as transaction_id.
     - Payment starts in PENDING state.
-    - Payment method is STRIPE.
     """
 
     idempotency_key = f"payment-{payment.id}"
@@ -125,6 +136,7 @@ def process_payment_webhook(
             )
 
             channel_layer = get_channel_layer()
+            correlation_id = _current_correlation_id()
 
             transaction.on_commit(
                 lambda: async_to_sync(
@@ -141,6 +153,7 @@ def process_payment_webhook(
                             "Booking status changed "
                             "to confirmed."
                         ),
+                        "correlation_id": correlation_id,
                     },
                 )
             )
