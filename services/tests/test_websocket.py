@@ -313,6 +313,25 @@ class BookingWebSocketTests(TransactionTestCase):
         )
 
         await communicator.disconnect()
+    def test_cannot_cancel_booking_in_progress(self):
+        self.booking.status = "in_progress"
+        self.booking.save(update_fields=["status", "updated_at"])
+
+        with self.assertRaises(ValueError):
+            cancel_booking(booking=self.booking)
+
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.status, "in_progress")
+
+    def test_cannot_cancel_booking_after_payment_failure(self):
+        self.booking.status = "payment_failed"
+        self.booking.save(update_fields=["status", "updated_at"])
+
+        with self.assertRaises(ValueError):
+            cancel_booking(booking=self.booking)
+
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.status, "payment_failed")
 
     async def test_payment_success_confirms_booking_and_broadcasts_to_websocket(
         self,

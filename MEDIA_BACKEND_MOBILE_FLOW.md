@@ -651,3 +651,150 @@ OK
 | Test invalid and large files         | Completed |
 | Add cleanup handling                 | Completed |
 | Document mobile upload/download flow | Completed |
+---
+
+## 26. End-to-End Upload State Model and API Contract
+
+### 26.1 Upload lifecycle
+
+The mobile application and backend follow this lifecycle:
+
+```text
+SELECT IMAGE
+    |
+    v
+LOCAL STAGING
+    |
+    +---- Invalid file or local storage failure
+    |          |
+    |          v
+    |       LOCAL FAILURE
+    |
+    v
+UPLOAD REQUEST
+    |
+    +---- Network timeout / connection lost
+    |          |
+    |          v
+    |       RETRY PENDING
+    |          |
+    |          v
+    |       UPLOAD REQUEST
+    |
+    v
+SERVER VALIDATION
+    |
+    +---- Invalid format, size, or image content
+    |          |
+    |          v
+    |       REJECTED
+    |
+    +---- Server or storage failure
+    |          |
+    |          v
+    |       RETRY / MANUAL RECOVERY
+    |
+    v
+MEDIA STORED
+    |
+    v
+DATABASE RECORD CREATED
+    |
+    v
+SUCCESS RESPONSE
+    |
+    v
+CLIENT RECORDS MEDIA ID
+    |
+    v
+READY FOR DISPLAY OR DOWNLOAD
+```
+
+The diagram describes the intended client/server interaction. Local staging and retry state are client responsibilities unless a dedicated server-side upload-session API is introduced.
+
+### 26.2 State definitions
+
+| State | Meaning | Next action |
+|---|---|---|
+| `selected` | User selected an image | Validate before staging |
+| `staged` | Image is available in temporary local storage | Start upload |
+| `uploading` | Request is being sent | Wait for response |
+| `retry_pending` | A transient network or server failure occurred | Retry with bounded attempts and backoff |
+| `rejected` | Validation or authorization failed | Correct the input or credentials |
+| `stored` | Server stored the file and created its media record | Process success response |
+| `completed` | Client recorded the returned media identifier | Display or download media |
+| `failed` | Retry limit reached or a non-recoverable failure occurred | Show error and allow a deliberate retry |
+
+These client-side states are conceptual documentation states; they are not claimed to be persisted by the current backend.
+
+### 26.3 API contract
+
+**Profile image upload**
+
+```http
+POST /api/v1/profile/image/
+Authorization: Bearer <access_token>
+Content-Type: multipart/form-data
+```
+
+Form field: `image`
+
+**Service image upload**
+
+```http
+POST /api/v1/services/<service_id>/images/
+Content-Type: multipart/form-data
+```
+
+Authentication and authorization follow the existing endpoint implementation.
+
+The client should treat a successful HTTP response as completion only after it has parsed the response and recorded the returned media identifier, where provided.
+
+### 26.4 Failure and retry rules
+
+- **Invalid image or size:** do not retry the unchanged file; select a valid image.
+- **Authentication or authorization failure:** refresh credentials or correct access; do not retry indefinitely.
+- **Network timeout:** the server may have received the request even if the client did not receive its response. Retry only with an explicit duplicate-upload strategy or after checking whether the media was created.
+- **Server/storage error:** use bounded retries with backoff for transient failures; surface a final error after retries are exhausted.
+- **Missing media during download:** report unavailable media and avoid an endless retry loop.
+- **Successful upload followed by lost response:** reconcile with the server before retrying to avoid creating duplicate media records.
+
+### 26.5 Idempotency limitation
+
+The documented profile and service image upload endpoints do not establish a dedicated upload-session or idempotency-key contract in this document. Therefore, exactly-once upload behavior must not be assumed.
+
+If duplicate upload prevention is required, introduce a server-validated upload idempotency key or upload-session identifier and test repeated requests before claiming this guarantee.
+
+### 26.6 Booking lifecycle and legal transitions
+
+The booking model in `services/models.py` defines the following legal
+transitions. Requests that attempt an invalid transition must be rejected
+without changing the booking status.
+
+| Current state | Allowed next states |
+|---|---|
+| `pending` | `confirmed`, `cancelled`, `payment_failed` |
+| `confirmed` | `in_progress`, `cancelled` |
+| `in_progress` | `completed` |
+| `completed` | None (terminal state) |
+| `cancelled` | None (terminal state) |
+| `payment_failed` | None (terminal state) |
+
+The cancellation service checks `can_transition_to("cancelled")` before
+saving the new status. Regression tests cover attempts to cancel bookings
+in `in_progress` and `payment_failed`; both attempts must raise `ValueError`
+and leave the original status unchanged.
+
+Payment webhook regression coverage also checks that sending the same
+successful webhook twice does not create duplicate payment-success or
+booking-confirmation notifications.
+
+### 26.7 Verification checklist
+
+- [ ] Valid image upload succeeds and the response identifies the stored media.
+- [ ] Invalid image is rejected.
+- [ ] Oversized image is rejected.
+- [ ] Unauthorized private media access is rejected.
+- [ ] Network interruption and retry behavior are tested or explicitly documented as a client-side responsibility.
+- [ ] Repeated upload behavior is verified before claiming idempotency.
+- [ ] Test commands and observed results are recorded without claiming unexecuted tests passed.

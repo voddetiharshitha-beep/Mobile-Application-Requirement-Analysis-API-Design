@@ -380,3 +380,48 @@ class PaymentJourneyTests(TransactionTestCase):
             "sk_test_",
             str(response.data),
         )
+    def test_duplicate_successful_webhook_does_not_duplicate_notifications(
+        self,
+    ):
+        payment = Payment.objects.create(
+            booking=self.booking,
+            amount=Decimal("500.00"),
+            transaction_id="MOCK-DUPLICATE-TRANSACTION",
+            payment_status="PENDING",
+            payment_method="MOCK",
+        )
+        payload = {
+            "payment_id": str(payment.id),
+            "transaction_id": payment.transaction_id,
+            "payment_status": "SUCCESS",
+        }
+
+        first_response = self.client.post(
+            "/api/v1/services/payments/webhook/",
+            payload,
+            format="json",
+            HTTP_X_WEBHOOK_SECRET=self.webhook_secret,
+        )
+        duplicate_response = self.client.post(
+            "/api/v1/services/payments/webhook/",
+            payload,
+            format="json",
+            HTTP_X_WEBHOOK_SECRET=self.webhook_secret,
+        )
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(duplicate_response.status_code, 200)
+
+        payment_notifications = Notification.objects.filter(
+            recipient=self.customer,
+            booking=self.booking,
+            notification_type="PAYMENT_SUCCESSFUL",
+        ).count()
+
+        booking_notifications = Notification.objects.filter(
+            recipient=self.customer,
+            booking=self.booking,
+            notification_type="BOOKING_CONFIRMED",
+        ).count()
+
+        self.assertEqual(payment_notifications, 1)
+        self.assertEqual(booking_notifications, 1)

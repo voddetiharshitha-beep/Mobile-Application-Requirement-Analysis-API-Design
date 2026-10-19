@@ -128,16 +128,17 @@ def cancel_booking(*, booking):
         raise ValueError(
             "Completed booking cannot be cancelled."
         )
-
+    if not booking.can_transition_to("cancelled"):
+        raise ValueError(
+            "Booking cannot be cancelled from its current status."
+        )
     booking.status = "cancelled"
-
     booking.save(
         update_fields=[
             "status",
             "updated_at",
         ]
     )
-
     channel_layer = get_channel_layer()
 
     async_to_sync(
