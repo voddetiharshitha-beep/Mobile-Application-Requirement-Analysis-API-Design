@@ -752,18 +752,23 @@ The client should treat a successful HTTP response as completion only after it h
 
 ### 26.4 Failure and retry rules
 
-- **Invalid image or size:** do not retry the unchanged file; select a valid image.
-- **Authentication or authorization failure:** refresh credentials or correct access; do not retry indefinitely.
-- **Network timeout:** the server may have received the request even if the client did not receive its response. Retry only with an explicit duplicate-upload strategy or after checking whether the media was created.
-- **Server/storage error:** use bounded retries with backoff for transient failures; surface a final error after retries are exhausted.
+- **Invalid image or size:** the server rejects invalid content, unsupported image types, and files exceeding the configured 5 MB limit. Do not retry the unchanged invalid file.
+- **Authentication or authorization failure:** refresh credentials or correct permissions. Do not retry indefinitely.
+- **Network timeout or lost response:** the client may not know whether the server completed the upload. For service image uploads, retry using the same `Idempotency-Key` and the exact same file.
+- **Transient server or storage failure:** clients should use bounded retries, with exponential backoff and jitter, for network errors, HTTP 429, and eligible HTTP 5xx responses. Allow at most three attempts in total. Respect `Retry-After` when provided.
+- **Non-retryable responses:** do not automatically retry validation errors or authentication/authorization failures. A 409 response indicating that an upload is still processing should be handled separately from an idempotency-key conflict.
+- **Repeated upload:** a successful retry using the same key and identical upload fingerprint returns the original response without creating another image record. Reusing the same key with different upload content returns a conflict.
 - **Missing media during download:** report unavailable media and avoid an endless retry loop.
-- **Successful upload followed by lost response:** reconcile with the server before retrying to avoid creating duplicate media records.
 
-### 26.5 Idempotency limitation
+The retry policy is a client-side recommendation; the server does not automatically retry a failed transfer on the client's behalf.
 
-The documented profile and service image upload endpoints do not establish a dedicated upload-session or idempotency-key contract in this document. Therefore, exactly-once upload behavior must not be assumed.
+### 26.5 Idempotency and resumability limitations
 
-If duplicate upload prevention is required, introduce a server-validated upload idempotency key or upload-session identifier and test repeated requests before claiming this guarantee.
+The service image upload endpoint supports the optional `Idempotency-Key` header. Use the same key for retries of the same image and service. A completed duplicate request returns HTTP 200 with the stored response; a request using the same key with a different upload fingerprint returns HTTP 409. A request already being processed also returns HTTP 409.
+
+The upload is still a **whole-file multipart upload**. Chunked transfer, byte-range upload, and resuming from a partial offset are not implemented. A retry must transmit the complete file again. The configured image size limit is 5 MB.
+
+Idempotency protects against duplicate image records for a completed request, but it does not provide resumable transfer or guarantee that every possible storage failure is automatically recovered. Clients should surface a final error after bounded retries are exhausted.
 
 ### 26.6 Booking lifecycle and legal transitions
 
@@ -791,10 +796,15 @@ booking-confirmation notifications.
 
 ### 26.7 Verification checklist
 
-- [ ] Valid image upload succeeds and the response identifies the stored media.
-- [ ] Invalid image is rejected.
-- [ ] Oversized image is rejected.
-- [ ] Unauthorized private media access is rejected.
-- [ ] Network interruption and retry behavior are tested or explicitly documented as a client-side responsibility.
-- [ ] Repeated upload behavior is verified before claiming idempotency.
-- [ ] Test commands and observed results are recorded without claiming unexecuted tests passed.
+- [x] Valid service image upload succeeds and returns the stored media identifier.
+- [x] Invalid image content is rejected.
+- [ ] Oversized image rejection verified in the current test run.
+- [x] Unauthorized service image upload is rejected.
+- [x] Repeated upload with the same idempotency key and identical image does not create a duplicate record.
+- [x] Reusing the same key with different image content returns a conflict.
+- [x] Targeted service image upload retry tests passed: `python manage.py test services.tests.test_service_image_upload_retries` — 5 tests.
+- [x] Existing idempotency tests passed: `python manage.py test services.tests.test_idempotency_reliability` — 6 tests.
+- [x] Media tests passed: `python manage.py test services.tests.test_media` — 6 tests.
+- [x] Django system check passed: `python manage.py check`.
+- [ ] Interrupted network transfer and actual storage-failure recovery have not been verified through an end-to-end fault-injection test.
+- [ ] Chunked upload and resume-from-offset are not implemented; clients must resend the complete file on retry.

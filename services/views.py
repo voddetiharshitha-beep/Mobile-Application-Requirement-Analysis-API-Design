@@ -1,6 +1,6 @@
 
 import logging
-
+import hashlib
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.core.cache import cache
@@ -1255,6 +1255,7 @@ class ServiceImageListCreateView(
             serializer.data
         )
 
+
     def post(
         self,
         request,
@@ -1262,12 +1263,8 @@ class ServiceImageListCreateView(
     ):
         service = (
             Service.objects
-            .select_related(
-                "provider__user"
-            )
-            .filter(
-                id=service_id
-            )
+            .select_related("provider__user")
+            .filter(id=service_id)
             .first()
         )
 
@@ -1278,15 +1275,9 @@ class ServiceImageListCreateView(
                 status.HTTP_404_NOT_FOUND,
             )
 
-        if (
-            service.provider.user
-            != request.user
-        ):
+        if service.provider.user != request.user:
             return build_api_error_response(
-                (
-                    "You can only upload images "
-                    "for your own service."
-                ),
+                "You can only upload images for your own service.",
                 "PERMISSION_DENIED",
                 status.HTTP_403_FORBIDDEN,
             )
@@ -1300,23 +1291,144 @@ class ServiceImageListCreateView(
 
         serializer = ServiceImageSerializer(
             data=request.data,
-            context={
-                "request": request,
-            },
+            context={"request": request},
         )
+        serializer.is_valid(raise_exception=True)
 
-        serializer.is_valid(
-            raise_exception=True
-        )
+        idempotency_key = get_idempotency_key(request)
+        idempotency_record = None
 
-        serializer.save(
-            service=service
-        )
+        if idempotency_key:
+            uploaded_image = serializer.validated_data["image"]
 
-        return Response(
-            serializer.data,
-            status=status.HTTP_201_CREATED,
-        )
+            # Fingerprint the actual file bytes without loading the
+            # entire upload into memory. Restore the pointer afterward.
+            digest = hashlib.sha256()
+            uploaded_image.seek(0)
+            for chunk in uploaded_image.chunks():
+                digest.update(chunk)
+            uploaded_image.seek(0)
+
+            request_fingerprint = {
+                "service_id": str(service.id),
+                "image_sha256": digest.hexdigest(),
+                "filename": uploaded_image.name,
+                "content_type": uploaded_image.content_type,
+                "size": uploaded_image.size,
+            }
+
+            idempotency_record, is_new = start_idempotent_request(
+                user=request.user,
+                key=idempotency_key,
+                operation=f"upload_service_image:{service.id}",
+                request_data=request_fingerprint,
+            )
+
+            if not is_new:
+                if idempotency_record.status == "COMPLETED":
+                    return Response(
+                        idempotency_record.response_body,
+                        status=status.HTTP_200_OK,
+                    )
+
+                if idempotency_record.status == "PROCESSING":
+                    return build_api_error_response(
+                        "This image upload is already being processed. "
+                        "Retry with the same Idempotency-Key.",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        status.HTTP_409_CONFLICT,
+                    )
+
+                if idempotency_record.status == "FAILED":
+                    # Recover an image saved before response completion failed.
+                    if (
+                        idempotency_record.resource_type == "service_image"
+                        and idempotency_record.resource_id
+                    ):
+                        existing_image = ServiceImage.objects.filter(
+                            id=idempotency_record.resource_id,
+                            service=service,
+                        ).first()
+
+                        if existing_image is not None:
+                            recovered_serializer = ServiceImageSerializer(
+                                existing_image,
+                                context={"request": request},
+                            )
+                            response_body = recovered_serializer.data
+
+                            complete_idempotent_request(
+                                record=idempotency_record,
+                                response_status=status.HTTP_201_CREATED,
+                                response_body=response_body,
+                                resource_type="service_image",
+                                resource_id=str(existing_image.id),
+                            )
+
+                            return Response(
+                                response_body,
+                                status=status.HTTP_200_OK,
+                            )
+
+                    # No previously saved image exists, so retry safely.
+                    idempotency_record.status = "PROCESSING"
+                    idempotency_record.response_status = None
+                    idempotency_record.response_body = None
+                    idempotency_record.resource_type = None
+                    idempotency_record.resource_id = None
+                    idempotency_record.save(
+                        update_fields=[
+                            "status",
+                            "response_status",
+                            "response_body",
+                            "resource_type",
+                            "resource_id",
+                        ]
+                    )
+
+
+
+        try:
+            serializer.save(service=service)
+
+            response_body = serializer.data
+
+            if idempotency_record:
+                complete_idempotent_request(
+                    record=idempotency_record,
+                    response_status=status.HTTP_201_CREATED,
+                    response_body=response_body,
+                    resource_type="service_image",
+                    resource_id=str(serializer.instance.id),
+                )
+
+            return Response(
+                response_body,
+                status=status.HTTP_201_CREATED,
+            )
+
+        except Exception:
+            if idempotency_record:
+                # Preserve the saved image reference so a retry can
+                # recover it if response completion failed.
+                if (
+                    serializer.instance is not None
+                    and serializer.instance.pk is not None
+                ):
+                    idempotency_record.resource_type = "service_image"
+                    idempotency_record.resource_id = str(
+                        serializer.instance.pk
+                    )
+                    idempotency_record.save(
+                        update_fields=[
+                            "resource_type",
+                            "resource_id",
+                        ]
+                    )
+
+                fail_idempotent_request(idempotency_record)
+            raise
+
 
 
 class ServiceImageDeleteView(
