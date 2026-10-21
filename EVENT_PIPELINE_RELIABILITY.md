@@ -307,3 +307,28 @@ The manual notification-task recovery procedure is documented in [FAILED_EVENT_R
 It covers failure investigation, duplicate checks, task-argument verification, controlled replay, and recording the recovery outcome.
 
 This is a manual recovery procedure. It must not be described as an automated dead-letter queue unless such a mechanism has been implemented and verified.
+
+## 14. Payment Webhook Idempotency and State Transitions
+
+### Behavior
+
+- A valid SUCCESS webhook marks the payment successful and confirms its booking.
+- A valid FAILED webhook marks the payment failed.
+- A duplicate event with the same status returns HTTP 200 without repeating the transition.
+- A conflicting event after a final payment status returns HTTP 409 with error code `PAYMENT_STATUS_CONFLICT`.
+- An invalid webhook secret returns HTTP 401.
+- Invalid payloads and mismatched transaction IDs are rejected.
+
+### Concurrency and consistency
+
+Payment processing uses a database transaction and `select_for_update()` to recheck the current status before applying a transition.
+
+Notifications and WebSocket updates are scheduled using `transaction.on_commit()` so they are not dispatched for a transaction that rolls back.
+
+### Verification
+
+Previously verified results: 9 payment journey tests, 6 idempotency reliability tests, and 7 image-upload retry tests passed. Django reported no system-check issues.
+
+### Limitations
+
+These tests verify behavior in the configured test environment. They do not guarantee exactly-once delivery by external notification providers or prove that a durable event inbox or automated dead-letter queue exists. Payment-provider signature verification and production webhook configuration require separate review.

@@ -646,79 +646,46 @@ def build_api_error_response(
     )
 
 
-class PaymentWebhookView(
-    generics.GenericAPIView
-):
-    serializer_class = PaymentProcessSerializer
-    permission_classes = []
 
-    def post(
-        self,
-        request,
-        *args,
-        **kwargs,
-    ):
-        webhook_secret = request.headers.get(
-            "X-Webhook-Secret"
-        )
+class PaymentWebhookSerializer(serializers.Serializer):
+    payment_id = serializers.UUIDField()
+    transaction_id = serializers.CharField(max_length=100)
+    payment_status = serializers.ChoiceField(
+        choices=["SUCCESS", "FAILED"]
+    )
 
-        if (
-            webhook_secret
-            != settings.PAYMENT_WEBHOOK_SECRET
-        ):
-            return build_api_error_response(
-                "Invalid webhook secret.",
-                "INVALID_WEBHOOK_SECRET",
-                status.HTTP_401_UNAUTHORIZED,
+    def validate(self, attrs):
+        payment_id = attrs["payment_id"]
+        transaction_id = attrs["transaction_id"]
+        payment_status = attrs["payment_status"]
+
+        try:
+            payment = (
+                Payment.objects
+                .select_related("booking")
+                .get(id=payment_id)
             )
+        except Payment.DoesNotExist:
+            raise serializers.ValidationError({
+                "payment_id": "Payment does not exist."
+            })
 
-        serializer = self.get_serializer(
-            data=request.data
+        if payment.transaction_id != transaction_id:
+            raise serializers.ValidationError({
+                "transaction_id": (
+                    "Transaction ID does not match the payment."
+                )
+            })
+
+        attrs["payment"] = payment
+        attrs["already_processed"] = (
+            payment.payment_status == payment_status
         )
 
-        serializer.is_valid(
-            raise_exception=True
-        )
+        # Do not reject conflicting final statuses here.
+        # The locked service layer handles them as HTTP 409.
 
-        payment = serializer.validated_data[
-            "payment"
-        ]
-
-        payment_status = serializer.validated_data[
-            "payment_status"
-        ]
-
-        already_processed = serializer.validated_data.get(
-            "already_processed",
-            False,
-        )
-
-        if not already_processed:
-            payment = process_payment_webhook(
-                payment=payment,
-                payment_status=payment_status,
-            )
-
-        return Response(
-            {
-                "success": True,
-                "message": (
-                    "Payment webhook processed successfully."
-                ),
-                "data": {
-                    "payment_id": str(
-                        payment.id
-                    ),
-                    "payment_status": (
-                        payment.payment_status
-                    ),
-                },
-            },
-            status=200,
-        )
-
-
-
+        return attrs
 
 class BookingStatusSerializer(
     serializers.Serializer

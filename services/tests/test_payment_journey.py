@@ -425,3 +425,78 @@ class PaymentJourneyTests(TransactionTestCase):
 
         self.assertEqual(payment_notifications, 1)
         self.assertEqual(booking_notifications, 1)
+
+    def test_success_then_failed_webhook_preserves_success(self):
+        payment = Payment.objects.create(
+            booking=self.booking,
+            amount=Decimal("500.00"),
+            transaction_id="MOCK-ORDER-SUCCESS-FIRST",
+            payment_status="PENDING",
+            payment_method="MOCK",
+        )
+
+        payload = {
+            "payment_id": str(payment.id),
+            "transaction_id": payment.transaction_id,
+            "payment_status": "SUCCESS",
+        }
+
+        first_response = self.client.post(
+            "/api/v1/services/payments/webhook/",
+            payload,
+            format="json",
+            HTTP_X_WEBHOOK_SECRET=self.webhook_secret,
+        )
+
+        payload["payment_status"] = "FAILED"
+        second_response = self.client.post(
+            "/api/v1/services/payments/webhook/",
+            payload,
+            format="json",
+            HTTP_X_WEBHOOK_SECRET=self.webhook_secret,
+        )
+
+        payment.refresh_from_db()
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 409)
+        self.assertEqual(payment.payment_status, "SUCCESS")
+        self.assertEqual(self.booking.__class__.objects.get(pk=self.booking.pk).status, "confirmed")
+
+    def test_failed_then_success_webhook_preserves_failure(self):
+        payment = Payment.objects.create(
+            booking=self.booking,
+            amount=Decimal("500.00"),
+            transaction_id="MOCK-ORDER-FAILED-FIRST",
+            payment_status="PENDING",
+            payment_method="MOCK",
+        )
+
+        payload = {
+            "payment_id": str(payment.id),
+            "transaction_id": payment.transaction_id,
+            "payment_status": "FAILED",
+        }
+
+        first_response = self.client.post(
+            "/api/v1/services/payments/webhook/",
+            payload,
+            format="json",
+            HTTP_X_WEBHOOK_SECRET=self.webhook_secret,
+        )
+
+        payload["payment_status"] = "SUCCESS"
+        second_response = self.client.post(
+            "/api/v1/services/payments/webhook/",
+            payload,
+            format="json",
+            HTTP_X_WEBHOOK_SECRET=self.webhook_secret,
+        )
+
+        payment.refresh_from_db()
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 409)
+        self.assertEqual(payment.payment_status, "FAILED")
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.status, "pending")

@@ -57,6 +57,7 @@ from .serializers import (
 )
 
 from .payment_service import (
+    PaymentWebhookConflict,
     initiate_payment,
     process_payment,
     process_payment_webhook,
@@ -1104,10 +1105,32 @@ class PaymentWebhookView(
             ]
         )
 
-        payment = process_payment_webhook(
-            payment=payment,
-            payment_status=payment_status,
-        )
+
+        if serializer.validated_data.get("already_processed"):
+            return Response(
+                {
+                    "success": True,
+                    "message": "Payment webhook already processed.",
+                    "data": {
+                        "payment_id": str(payment.id),
+                        "payment_status": payment.payment_status,
+                    },
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        try:
+            payment = process_payment_webhook(
+                payment=payment,
+                payment_status=payment_status,
+            )
+        except PaymentWebhookConflict:
+            return build_api_error_response(
+                "Payment has already been processed with a different status.",
+                "PAYMENT_STATUS_CONFLICT",
+                status.HTTP_409_CONFLICT,
+            )
+
 
         return Response(
             {
