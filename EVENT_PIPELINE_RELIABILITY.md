@@ -340,3 +340,25 @@ The test results above were observed in the local configured test environment. R
 Idempotency records expire after 24 hours. Expired `COMPLETED` and `FAILED` records may be reused; expired `PROCESSING` records are not automatically reclaimed because the original operation might still be running. Database uniqueness and row locking protect the record-reuse path, subject to the configured database's transaction and locking behavior.
 
 These tests do not prove that all event types are deduplicated through a durable event inbox, that every out-of-order callback is handled, or that external notification providers deliver exactly once. The failed-event recovery procedure remains manual, not an automated dead-letter queue. Payment-provider signature verification and production webhook configuration require separate review.
+
+## 15. Observability and Integration Test Evidence
+
+### Correlation IDs
+
+The HTTP request middleware accepts a valid `X-Request-ID` or generates a replacement when the supplied value is invalid. It returns the request ID in the response and includes it in request logging. Automated tests verify request-ID handling, request and server-error metrics, and correlation-ID propagation to the notification task.
+
+### Failure and recovery scenarios
+
+The automated tests cover offline synchronization checkpoint recovery, notification broker timeout logging and failure metrics, rejected input and state transitions, duplicate booking requests and payment webhooks, health-check failures, HTTP 503 responses, and request tracing.
+
+### Verification command
+
+Run the focused observability and reliability regression suite from the project root:
+
+`python manage.py test services.tests.test_observability_integration services.tests.test_observability_metrics services.tests.test_request_id_middleware services.tests.test_health_checks services.tests.test_notification_queue_resilience services.tests.test_incremental_sync services.tests.test_idempotency_reliability services.tests.test_payment_journey`
+
+Latest recorded result: 43 tests passed in 81.760 seconds.
+
+### Limitations
+
+These tests establish behavior in the local automated test environment. A mocked broker timeout does not prove behavior during a real network outage. The offline synchronization test verifies checkpoint-based recovery rather than physically disconnecting a mobile device. Correlation propagation has been verified for the tested notification-task path, not every Celery task or WebSocket message. Production monitoring and external notification delivery require environment-specific verification.
