@@ -135,7 +135,6 @@ class IdempotencyReliabilityTests(TestCase):
         self,
     ):
         idempotency_key = str(uuid4())
-
         first_payload = self.booking_payload()
 
         first_response = self.client.post(
@@ -172,8 +171,9 @@ class IdempotencyReliabilityTests(TestCase):
             1,
         )
 
-
-    def test_processing_request_returns_conflict_for_duplicate(self):
+    def test_processing_request_returns_conflict_for_duplicate(
+        self,
+    ):
         idempotency_key = str(uuid4())
         payload = self.booking_payload()
 
@@ -283,13 +283,68 @@ class IdempotencyReliabilityTests(TestCase):
             201,
         )
 
+    def test_expired_idempotency_key_can_be_reused(self):
+        idempotency_key = str(uuid4())
+        payload = self.booking_payload()
+
+        request_hash = build_request_hash(
+            payload,
+        )
+
+        IdempotencyRecord.objects.create(
+            user=self.user,
+            key=idempotency_key,
+            operation="create_booking",
+            request_hash=request_hash,
+            status="COMPLETED",
+            response_status=201,
+            response_body={
+                "id": "old-booking",
+            },
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+
+        response = self.client.post(
+            "/api/v1/bookings/",
+            payload,
+            format="json",
+            HTTP_IDEMPOTENCY_KEY=idempotency_key,
+        )
+
+        self.assertEqual(
+            response.status_code,
+            201,
+        )
+
+        self.assertEqual(
+            Booking.objects.filter(
+                customer=self.user,
+            ).count(),
+            1,
+        )
+
+        record = IdempotencyRecord.objects.get(
+            user=self.user,
+            key=idempotency_key,
+            operation="create_booking",
+        )
+
+        self.assertEqual(
+            record.status,
+            "COMPLETED",
+        )
+
+        self.assertGreater(
+            record.expires_at,
+            timezone.now(),
+        )
+
     def test_response_loss_retry_returns_original_booking(
         self,
     ):
         idempotency_key = str(uuid4())
         payload = self.booking_payload()
 
-        # Simulate the first request succeeding.
         first_response = self.client.post(
             "/api/v1/bookings/",
             payload,
@@ -306,8 +361,6 @@ class IdempotencyReliabilityTests(TestCase):
             first_response,
         )
 
-        # The client behaves as if the response was lost.
-        # It sends the EXACT SAME request again.
         retry_response = self.client.post(
             "/api/v1/bookings/",
             payload,
@@ -324,13 +377,11 @@ class IdempotencyReliabilityTests(TestCase):
             retry_response,
         )
 
-        # The retry must return the original booking.
         self.assertEqual(
             retry_booking_id,
             first_booking_id,
         )
 
-        # No duplicate booking may be created.
         self.assertEqual(
             Booking.objects.filter(
                 customer=self.user,
@@ -338,7 +389,6 @@ class IdempotencyReliabilityTests(TestCase):
             1,
         )
 
-        # The idempotency record must remain completed.
         record = IdempotencyRecord.objects.get(
             user=self.user,
             key=idempotency_key,
@@ -354,6 +404,7 @@ class IdempotencyReliabilityTests(TestCase):
             record.response_status,
             201,
         )
+
 
 class ConcurrentIdempotencyTests(TransactionTestCase):
     reset_sequences = True
@@ -433,7 +484,6 @@ class ConcurrentIdempotencyTests(TransactionTestCase):
         self,
     ):
         idempotency_key = str(uuid4())
-
         results = []
 
         thread_one = threading.Thread(

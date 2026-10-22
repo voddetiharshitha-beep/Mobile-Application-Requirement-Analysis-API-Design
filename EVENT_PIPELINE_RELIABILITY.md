@@ -304,18 +304,19 @@ These behaviors must be verified through source-code inspection and automated te
 
 The manual notification-task recovery procedure is documented in [FAILED_EVENT_RECOVERY.md](FAILED_EVENT_RECOVERY.md).
 
-It covers failure investigation, duplicate checks, task-argument verification, controlled replay, and recording the recovery outcome.
+It covers failure investigation, duplicate checks, safe task replay, and post-recovery verification.
 
 This is a manual recovery procedure. It must not be described as an automated dead-letter queue unless such a mechanism has been implemented and verified.
-
 ## 14. Payment Webhook Idempotency and State Transitions
 
 ### Behavior
 
-- A valid SUCCESS webhook marks the payment successful and confirms its booking.
-- A valid FAILED webhook marks the payment failed.
-- A duplicate event with the same status returns HTTP 200 without repeating the transition.
-- A conflicting event after a final payment status returns HTTP 409 with error code `PAYMENT_STATUS_CONFLICT`.
+The payment webhook endpoint validates the configured webhook secret, payment ID, transaction ID, and payment status.
+
+- A valid SUCCESS event transitions the payment to SUCCESS and confirms its booking.
+- A valid FAILED event transitions the payment to FAILED.
+- A duplicate event with the same status returns HTTP 200 without repeating the payment transition.
+- A conflicting event after a final status returns HTTP 409 with error code `PAYMENT_STATUS_CONFLICT`.
 - An invalid webhook secret returns HTTP 401.
 - Invalid payloads and mismatched transaction IDs are rejected.
 
@@ -323,12 +324,19 @@ This is a manual recovery procedure. It must not be described as an automated de
 
 Payment processing uses a database transaction and `select_for_update()` to recheck the current status before applying a transition.
 
-Notifications and WebSocket updates are scheduled using `transaction.on_commit()` so they are not dispatched for a transaction that rolls back.
+Notifications and WebSocket updates are scheduled using `transaction.on_commit()` so they are not dispatched for a transaction that rolls back
 
 ### Verification
 
-Previously verified results: 9 payment journey tests, 6 idempotency reliability tests, and 7 image-upload retry tests passed. Django reported no system-check issues.
+Latest focused verification for the idempotency changes:
+
+- `python manage.py test services.tests.test_idempotency_reliability` — 7 tests passed, including same-key replay, conflicting payload rejection, duplicate requests during processing, retry after failure, expired-key reuse, response-loss retry, and concurrent duplicate requests.
+- `python manage.py test services.tests.test_payment_journey` — 9 tests passed, including payment webhook behavior and payment state-transition regression coverage.
+
+The test results above were observed in the local configured test environment. Rerun the commands after further changes. Previously recorded image-upload retry results are separate from this verification.
 
 ### Limitations
 
-These tests verify behavior in the configured test environment. They do not guarantee exactly-once delivery by external notification providers or prove that a durable event inbox or automated dead-letter queue exists. Payment-provider signature verification and production webhook configuration require separate review.
+Idempotency records expire after 24 hours. Expired `COMPLETED` and `FAILED` records may be reused; expired `PROCESSING` records are not automatically reclaimed because the original operation might still be running. Database uniqueness and row locking protect the record-reuse path, subject to the configured database's transaction and locking behavior.
+
+These tests do not prove that all event types are deduplicated through a durable event inbox, that every out-of-order callback is handled, or that external notification providers deliver exactly once. The failed-event recovery procedure remains manual, not an automated dead-letter queue. Payment-provider signature verification and production webhook configuration require separate review.

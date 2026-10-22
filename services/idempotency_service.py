@@ -114,6 +114,7 @@ def get_existing_record(
     return record
 
 
+
 def create_idempotency_record(
     *,
     user,
@@ -122,21 +123,19 @@ def create_idempotency_record(
     request_hash,
 ):
     """
-    Atomically create an idempotency record.
+    Atomically create or safely reuse an idempotency record.
+
+    An expired COMPLETED or FAILED record may be reused.
+    An expired PROCESSING record is not reclaimed automatically,
+    because its original operation might still be running.
 
     Returns:
         (record, is_new)
-
-    is_new=True:
-        This database transaction created the record.
-
-    is_new=False:
-        Another request already created the record.
     """
 
-    expires_at = (
-        timezone.now()
-        + timedelta(hours=IDEMPOTENCY_EXPIRY_HOURS)
+    now = timezone.now()
+    expires_at = now + timedelta(
+        hours=IDEMPOTENCY_EXPIRY_HOURS
     )
 
     try:
@@ -153,21 +152,62 @@ def create_idempotency_record(
         return record, True
 
     except IntegrityError:
-        record = (
-            IdempotencyRecord.objects.get(
-                user=user,
-                key=key,
-                operation=operation,
+        # The insert conflicted with the unique constraint.
+        # Lock the existing row before deciding whether it
+        # can be reused, so concurrent retries cannot both
+        # claim the same expired record.
+        with transaction.atomic():
+            record = (
+                IdempotencyRecord.objects
+                .select_for_update()
+                .get(
+                    user=user,
+                    key=key,
+                    operation=operation,
+                )
             )
-        )
 
-        if record.request_hash != request_hash:
-            raise IdempotencyConflict(
-                "The same Idempotency-Key cannot be reused "
-                "for a different request."
-            )
+            now = timezone.now()
 
-        return record, False
+            if (
+                record.expires_at <= now
+                and record.status in ("COMPLETED", "FAILED")
+            ):
+                record.request_hash = request_hash
+                record.status = "PROCESSING"
+                record.expires_at = (
+                    now
+                    + timedelta(
+                        hours=IDEMPOTENCY_EXPIRY_HOURS
+                    )
+                )
+                record.response_status = None
+                record.response_body = None
+                record.resource_type = None
+                record.resource_id = None
+
+                record.save(
+                    update_fields=[
+                        "request_hash",
+                        "status",
+                        "expires_at",
+                        "response_status",
+                        "response_body",
+                        "resource_type",
+                        "resource_id",
+                    ]
+                )
+
+                return record, True
+
+            if record.request_hash != request_hash:
+                raise IdempotencyConflict(
+                    "The same Idempotency-Key cannot be reused "
+                    "for a different request."
+                )
+
+            return record, False
+
 
 
 def start_idempotent_request(
