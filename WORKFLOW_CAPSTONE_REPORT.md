@@ -126,16 +126,40 @@ Avoid manually deleting database records or stored files as a first recovery ste
 
 ## 8. Daily Story Acceptance Status
 
-- **Status: BLOCKED pending consolidated evidence.** This report does not yet list all five daily stories individually with their completion status and supporting evidence. Do not mark this acceptance criterion complete until each story is listed as completed with evidence or explicitly blocked with a reason.
+**Overall status: PARTIALLY VERIFIED — final capstone acceptance remains blocked by outstanding end-to-end evidence.**
+
+The following table consolidates the five daily stories for the Reliable Media/Data Upload and Synchronization Workflow. A committed implementation is not, by itself, proof that every acceptance criterion has passed.
+
+| Day | Story | Evidence available | Status and remaining work |
+|---|---|---|---|
+| Day 1 — 19 October 2026 | End-to-end flow and state model | Commit `e3e0aad` — `Document upload state model and enforce booking transitions`. The workflow diagram and API/recovery contract are documented in this report. | **Implemented; acceptance review pending.** Map successful and negative/boundary behavior to the story criteria and confirm the relevant tests. |
+| Day 2 — 20 October 2026 | Reliable transfer and retry | Commit `224f2a7` — `feat: harden service image upload retries`. The upload retry suite reported 8 passing tests, including validation, duplicate/conflicting requests, ownership enforcement, simulated completion-failure recovery, and upload-to-list integration. | **Partially verified.** Chunked/resumable upload is not implemented. Real network interruption and storage-outage failure injection remain unverified. |
+| Day 3 — 21 October 2026 | Idempotent event/API processing | Commit `01ca721` — `Make payment webhooks idempotent`. Earlier validation also reported passing idempotency reliability tests. | **Implementation and test evidence available; acceptance review pending.** Confirm the current test commands/results and document the supported duplicate and out-of-order event behavior and its limitations. |
+| Day 4 — 22 October 2026 | Observability and integration tests | Commit `9ffc898` — `test: add observability integration coverage`. The observability test module was run on 23 October 2026; 10 tests passed in 0.020 seconds (`OK`). | **Focused observability tests verified.** Explicitly map evidence for offline mode, timeout, rejection, duplicate submission, and server-error scenarios; do not assume the 10 tests cover every scenario without inspecting the tests. |
+| Day 5 — 23 October 2026 | Workflow capstone | Commit `8ea27d9` — `test: document upload-to-result reliability`. The report records 8 upload retry/recovery tests, 3 booking workflow tests, a passing Django system check, and an upload-to-list API integration test. | **Partially verified; final acceptance blocked.** A complete mobile-client-to-result run and real network/storage failure injection have not been verified. |
+
+### Consolidated acceptance decision
+
+- The implementation, test coverage, documentation, and commit history provide evidence of substantial progress across all five stories.
+- The focused upload, booking, and observability test results are evidence of component behavior; they do not establish that the entire mobile-client-to-result workflow has passed as one integrated run.
+- Chunked/resumable uploads are not implemented, and real network/storage failure injection remains outstanding.
+- The exact coverage of each daily story must be checked against its individual acceptance criteria before marking that story fully complete.
+- The final mini-project remains **partially verified** until the remaining critical integration evidence is collected or explicitly accepted as a documented limitation by the project evaluator.
 
 ## 9. Completion Checklist
 
-- [x] Existing implementation reviewed.
-- [x] Upload retry/recovery tests passed.
-- [x] Booking workflow tests passed.
-- [x] Django system check passed.
-- [x] State diagram, API contract, security boundaries, and troubleshooting documented.
+- [x] Existing implementation and workflow documented.
+- [x] Upload retry/recovery test results recorded: 8 tests passed in the reported run.
+- [x] Booking workflow test results recorded: 3 tests passed in the reported run.
+- [x] Django configuration check passed in the reported run.
 - [x] Focused upload-to-list API integration test verified.
-- [ ] Full mobile-client-to-result end-to-end and real network/storage failure-injection tests verified.
-- [ ] Final Git diff reviewed.
-- [ ] Changes committed and pushed.
+- [x] Observability test module verified: 10 tests passed in the run on 23 October 2026.
+- [x] Five daily stories listed with evidence and explicit remaining work.
+- [x] Git history reviewed; latest branch state was clean and synchronized with `origin/release/1.0.0` when checked.
+- [ ] Full mobile-client-to-result end-to-end journey verified.
+- [ ] Real network interruption and storage-outage failure-injection tests verified.
+- [ ] Evidence mapped to every individual daily-story acceptance criterion.
+- [ ] Final documentation diff reviewed and validated.
+- [ ] Documentation update committed and pushed.
+
+**Release note:** The repository was clean and synchronized before this documentation edit. Re-run `git diff --check`, review the final diff, then commit and push the documentation update after validation. Do not mark the end-to-end or real failure-injection items complete without new evidence.
