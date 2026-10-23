@@ -205,3 +205,26 @@ class ServiceImageUploadRetryTests(TestCase):
             ServiceImage.objects.filter(service=self.service).count(),
             1,
         )
+
+    def test_uploaded_image_appears_in_service_image_list(self):
+        key = str(uuid4())
+
+        upload_response = self.upload(
+            self.create_image(color="red"),
+            key,
+        )
+
+        self.assertEqual(upload_response.status_code, 201)
+        uploaded_id = upload_response.data["id"]
+
+        list_response = self.client.get(self.url)
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertIn(
+            uploaded_id,
+            [item["id"] for item in list_response.data["results"]],
+        )
+        self.assertEqual(
+            ServiceImage.objects.filter(service=self.service).count(),
+            1,
+        )
