@@ -1,7 +1,8 @@
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
-
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from services.models import (
     Category,
     Provider,
@@ -269,4 +270,41 @@ class SavedServiceAPITests(APITestCase):
         self.assertEqual(
             response.status_code,
             status.HTTP_404_NOT_FOUND,
+        )
+
+    def test_saved_service_list_query_count_does_not_grow_per_service(self):
+        self.client.force_authenticate(user=self.customer)
+
+        SavedService.objects.create(
+            customer=self.customer,
+            service=self.service,
+        )
+
+        with CaptureQueriesContext(connection) as one_service_queries:
+            one_service_response = self.client.get(self.url)
+
+        self.assertEqual(
+            one_service_response.status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertEqual(len(one_service_response.data), 1)
+
+        SavedService.objects.create(
+            customer=self.customer,
+            service=self.second_service,
+        )
+
+        with CaptureQueriesContext(connection) as two_service_queries:
+            two_service_response = self.client.get(self.url)
+
+        self.assertEqual(
+            two_service_response.status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertEqual(len(two_service_response.data), 2)
+
+        self.assertEqual(
+            len(one_service_queries),
+            len(two_service_queries),
+            "Saved-service list queries should not grow per saved service.",
         )
