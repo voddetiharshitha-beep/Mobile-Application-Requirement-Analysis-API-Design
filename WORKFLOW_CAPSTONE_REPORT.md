@@ -1,4 +1,4 @@
-# Workflow Capstone: Upload-to-Result Reliability
+﻿# Workflow Capstone: Upload-to-Result Reliability
 
 **Validation date:** 2026-10-23
 
@@ -155,11 +155,11 @@ The following table consolidates the five daily stories for the Reliable Media/D
 - [x] Focused upload-to-list API integration test verified.
 - [x] Observability test module verified: 10 tests passed in the run on 23 October 2026.
 - [x] Five daily stories listed with evidence and explicit remaining work.
-- [x] Git history reviewed; latest branch state was clean and synchronized with `origin/release/1.0.0` when checked.
+- [x] Git history reviewed; the current branch is one commit ahead of `origin/release/1.0.0`. Two untracked report backup files remain and are intentionally untouched.
 - [ ] Full mobile-client-to-result end-to-end journey verified.
 - [ ] Real network interruption and storage-outage failure-injection tests verified.
 - [ ] Evidence mapped to every individual daily-story acceptance criterion.
 - [ ] Final documentation diff reviewed and validated.
-- [ ] Documentation update committed and pushed.
+- [x] Previous report version committed as `f85cb1c`; the current documentation correction remains uncommitted, and pushing remains outstanding.
 
-**Release note:** The repository was clean and synchronized before this documentation edit. Re-run `git diff --check`, review the final diff, then commit and push the documentation update after validation. Do not mark the end-to-end or real failure-injection items complete without new evidence.
+**Release note:** The report is already committed as `f85cb1c`. The current branch is one commit ahead of `origin/release/1.0.0`, and two untracked backup files remain untouched. The committed patch passed `git show --format= --check HEAD`. Review this documentation-only correction before making another commit. Do not push unless explicitly approved, and do not mark the end-to-end or real failure-injection items complete without new evidence.
