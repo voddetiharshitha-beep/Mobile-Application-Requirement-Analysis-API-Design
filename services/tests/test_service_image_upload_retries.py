@@ -207,8 +207,6 @@ class ServiceImageUploadRetryTests(TestCase):
         )
 
     def test_storage_failure_can_be_retried_without_duplicate_record(self):
-        from services.models import ServiceImage
-
         key = str(uuid4())
         storage = ServiceImage._meta.get_field("image").storage
 
@@ -254,6 +252,69 @@ class ServiceImageUploadRetryTests(TestCase):
             uploaded_id,
             [item["id"] for item in list_response.data["results"]],
         )
+        self.assertEqual(
+            ServiceImage.objects.filter(service=self.service).count(),
+            1,
+        )
+
+    def test_provider_upload_retry_is_visible_to_customer(self):
+        key = str(uuid4())
+
+        # Provider uploads the image.
+        first_response = self.upload(
+            self.create_image(color="red"),
+            key,
+        )
+        self.assertEqual(first_response.status_code, 201)
+        uploaded_id = first_response.data["id"]
+
+        # Retry with the same key and image.
+        retry_response = self.upload(
+            self.create_image(color="red"),
+            key,
+        )
+        self.assertEqual(retry_response.status_code, 200)
+        self.assertEqual(retry_response.data["id"], uploaded_id)
+
+        # Clear provider authentication and log in as the customer.
+        self.client.force_authenticate(user=None)
+
+        login_response = self.client.post(
+            "/api/v1/token/",
+            {
+                "username": "image_retry_customer",
+                "password": "TestPassword123!",
+            },
+            format="json",
+        )
+        self.assertEqual(login_response.status_code, 200)
+        self.assertIn("access", login_response.data)
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {login_response.data['access']}"
+        )
+
+        # Customer discovers the service.
+        services_response = self.client.get("/api/v1/services/")
+        self.assertEqual(services_response.status_code, 200)
+
+        service_ids = [
+            item["id"]
+            for item in services_response.data["results"]
+        ]
+        self.assertIn(str(self.service.id), service_ids)
+
+        # Customer retrieves the service image list.
+        images_response = self.client.get(self.url)
+        self.assertEqual(images_response.status_code, 200)
+
+        image_ids = [
+            item["id"]
+            for item in images_response.data["results"]
+        ]
+        self.assertIn(uploaded_id, image_ids)
+
+        # Confirm that retry did not create a duplicate record.
         self.assertEqual(
             ServiceImage.objects.filter(service=self.service).count(),
             1,
