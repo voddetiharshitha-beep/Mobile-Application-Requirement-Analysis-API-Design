@@ -1,4 +1,4 @@
-﻿# Workflow Capstone: Upload-to-Result Reliability
+# Workflow Capstone: Upload-to-Result Reliability
 
 **Validation date:** 2026-10-23
 
@@ -77,7 +77,7 @@ Command:
 
 `python manage.py test services.tests.test_service_image_upload_retries --keepdb --verbosity 2`
 
-Result: **8 tests passed in 34.420 seconds (`OK`).**
+Result: **9 tests passed in 34.334 seconds (`OK`) on 2026-10-26.**
 
 Coverage includes successful upload, duplicate protection, conflicting content, invalid and oversized images, ownership enforcement, simulated idempotency-completion failure recovery, and upload-to-list API integration confirming the created image is retrievable without duplication.
 
@@ -133,10 +133,10 @@ The following table consolidates the five daily stories for the Reliable Media/D
 | Day | Story | Evidence available | Status and remaining work |
 |---|---|---|---|
 | Day 1 — 19 October 2026 | End-to-end flow and state model | Commit `e3e0aad` — `Document upload state model and enforce booking transitions`. The workflow diagram, API/recovery contract, booking transition rules, and upload limitations are documented. Three targeted regression tests passed on 23 October 2026 in 16.943 seconds: two invalid cancellation cases and duplicate successful webhook notification deduplication. | **Core criteria verified; full mobile-client-to-result end-to-end evidence and real network/storage failure injection remain outstanding.** |
-| Day 2 — 20 October 2026 | Reliable transfer and retry | Commit `224f2a7` — `feat: harden service image upload retries`. The upload retry suite reported 8 passing tests, including validation, duplicate/conflicting requests, ownership enforcement, simulated completion-failure recovery, and upload-to-list integration. | **Partially verified.** Chunked/resumable upload is not implemented. Real network interruption and storage-outage failure injection remain unverified. |
+| Day 2 — 20 October 2026 | Reliable transfer and retry | Original implementation commit `224f2a7`; latest retry/recovery changes are in commit `880a802` (`feat: harden media upload retry and recovery workflow`). The earlier report recorded 8 passing tests. On 2026-10-26, the updated upload retry suite passed 9 tests in 34.334 seconds, including the storage-failure retry regression test. Existing coverage includes validation, duplicate/conflicting requests, ownership enforcement, simulated completion-failure recovery, and upload-to-list integration. | **Partially verified.** Chunked/resumable upload is not implemented. Real network interruption and storage-outage failure injection remain unverified. |
 | Day 3 — 21 October 2026 | Idempotent event/API processing | Commit `01ca721` — `Make payment webhooks idempotent`. Earlier validation also reported passing idempotency reliability tests. | **Implementation and test evidence available; acceptance review pending.** Confirm the current test commands/results and document the supported duplicate and out-of-order event behavior and its limitations. |
 | Day 4 — 22 October 2026 | Observability and integration tests | Commit `9ffc898` — `test: add observability integration coverage`. The observability test module was run on 23 October 2026; 10 tests passed in 0.020 seconds (`OK`). | **Focused observability tests verified.** Explicitly map evidence for offline mode, timeout, rejection, duplicate submission, and server-error scenarios; do not assume the 10 tests cover every scenario without inspecting the tests. |
-| Day 5 — 23 October 2026 | Workflow capstone | Commit `8ea27d9` — `test: document upload-to-result reliability`. The report records 8 upload retry/recovery tests, 3 booking workflow tests, a passing Django system check, and an upload-to-list API integration test. | **Partially verified; final acceptance blocked.** A complete mobile-client-to-result run and real network/storage failure injection have not been verified. |
+| Day 5 — 23 October 2026 | Workflow capstone | Commit `8ea27d9` — `test: document upload-to-result reliability`. The report originally recorded 8 upload retry/recovery tests; the latest upload retry suite passed 9 tests. The report also records three booking workflow tests, a passing Django system check, and an upload-to-list API integration test. | **Partially verified; final acceptance blocked.** A complete mobile-client-to-result run and real network/storage failure injection have not been verified. |
 
 ### Consolidated acceptance decision
 
@@ -149,17 +149,17 @@ The following table consolidates the five daily stories for the Reliable Media/D
 ## 9. Completion Checklist
 
 - [x] Existing implementation and workflow documented.
-- [x] Upload retry/recovery test results recorded: 8 tests passed in the reported run.
+- [x] Latest upload retry/recovery run recorded: 9 tests passed in 34.334 seconds on 2026-10-26.
 - [x] Booking workflow test results recorded: 3 tests passed in the reported run.
 - [x] Django configuration check passed in the reported run.
 - [x] Focused upload-to-list API integration test verified.
 - [x] Observability test module verified: 10 tests passed in the run on 23 October 2026.
 - [x] Five daily stories listed with evidence and explicit remaining work.
-- [x] Git history reviewed; the current branch is two commits ahead of `origin/release/1.0.0`. Two untracked report backup files remain and are intentionally untouched.
+- [x] Git history reviewed; before this report correction, the branch was four commits ahead of `origin/release/1.0.0`. Five untracked backup files are intentionally preserved.
 - [ ] Full mobile-client-to-result end-to-end journey verified.
 - [ ] Real network interruption and storage-outage failure-injection tests verified.
 - [ ] Evidence mapped to every individual daily-story acceptance criterion.
 - [ ] Final documentation diff reviewed and validated.
-- [x] Previous report correction committed as `ab246a3`; this acceptance-review update remains uncommitted, and pushing remains outstanding.
+- [x] Latest upload-retry implementation and regression test committed as `880a802`. This report correction remains uncommitted pending review; pushing remains outstanding.
 
-**Release note:** The latest committed report version is `ab246a3`. The current branch is two commits ahead of `origin/release/1.0.0`. This Day 1 acceptance-review update remains uncommitted. Two untracked report backup files remain untouched. Review the documentation diff and run `git diff --check` before committing. Do not push unless explicitly approved, and do not mark full mobile end-to-end testing or real network/storage failure injection complete without evidence.
+**Release note:** The report-focused commit at the start of this review was `b764953`; the latest upload-retry implementation commit is `880a802`. Before this report correction, the branch was four commits ahead of `origin/release/1.0.0`. This correction remains uncommitted pending review. Five untracked backup files remain untouched. Review the documentation diff and run `git diff --check` before committing. Do not push unless explicitly approved, and do not mark full mobile end-to-end testing or real network/storage failure injection complete without evidence.
