@@ -206,6 +206,36 @@ class ServiceImageUploadRetryTests(TestCase):
             1,
         )
 
+    def test_storage_failure_can_be_retried_without_duplicate_record(self):
+        from services.models import ServiceImage
+
+        key = str(uuid4())
+        storage = ServiceImage._meta.get_field("image").storage
+
+        with patch.object(
+            storage,
+            "save",
+            side_effect=OSError("Simulated storage outage"),
+        ):
+            with self.assertRaises(OSError):
+                self.upload(self.create_image(color="red"), key)
+
+        self.assertEqual(
+            ServiceImage.objects.filter(service=self.service).count(),
+            0,
+        )
+
+        retry_response = self.upload(
+            self.create_image(color="red"),
+            key,
+        )
+
+        self.assertEqual(retry_response.status_code, 201)
+        self.assertEqual(
+            ServiceImage.objects.filter(service=self.service).count(),
+            1,
+        )
+
     def test_uploaded_image_appears_in_service_image_list(self):
         key = str(uuid4())
 

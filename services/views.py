@@ -4,6 +4,7 @@ import hashlib
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.core.cache import cache
+from django.db import transaction
 from django.http import FileResponse
 
 from rest_framework import generics, status
@@ -1278,7 +1279,6 @@ class ServiceImageListCreateView(
             serializer.data
         )
 
-
     def post(
         self,
         request,
@@ -1354,7 +1354,10 @@ class ServiceImageListCreateView(
                         status=status.HTTP_200_OK,
                     )
 
-                if idempotency_record.status == "PROCESSING":
+                if (
+                    idempotency_record is not None
+                    and idempotency_record.status == "PROCESSING"
+                ):
                     return build_api_error_response(
                         "This image upload is already being processed. "
                         "Retry with the same Idempotency-Key.",
@@ -1362,8 +1365,11 @@ class ServiceImageListCreateView(
                         status.HTTP_409_CONFLICT,
                     )
 
-                if idempotency_record.status == "FAILED":
-                    # Recover an image saved before response completion failed.
+                if (
+                    idempotency_record is not None
+                    and idempotency_record.status == "FAILED"
+                ):
+                    # Recover an image saved before completion failed.
                     if (
                         idempotency_record.resource_type == "service_image"
                         and idempotency_record.resource_id
@@ -1399,6 +1405,7 @@ class ServiceImageListCreateView(
                     idempotency_record.response_body = None
                     idempotency_record.resource_type = None
                     idempotency_record.resource_id = None
+
                     idempotency_record.save(
                         update_fields=[
                             "status",
@@ -1409,12 +1416,11 @@ class ServiceImageListCreateView(
                         ]
                     )
 
-
-
         try:
-            serializer.save(service=service)
-
-            response_body = serializer.data
+            # Commit the image save before completing idempotency.
+            with transaction.atomic():
+                serializer.save(service=service)
+                response_body = serializer.data
 
             if idempotency_record:
                 complete_idempotent_request(
@@ -1432,12 +1438,17 @@ class ServiceImageListCreateView(
 
         except Exception:
             if idempotency_record:
-                # Preserve the saved image reference so a retry can
-                # recover it if response completion failed.
-                if (
+                # Keep a recovery reference only if the image exists.
+                image_exists = (
                     serializer.instance is not None
                     and serializer.instance.pk is not None
-                ):
+                    and ServiceImage.objects.filter(
+                        pk=serializer.instance.pk,
+                        service=service,
+                    ).exists()
+                )
+
+                if image_exists:
                     idempotency_record.resource_type = "service_image"
                     idempotency_record.resource_id = str(
                         serializer.instance.pk
@@ -1450,7 +1461,9 @@ class ServiceImageListCreateView(
                     )
 
                 fail_idempotent_request(idempotency_record)
+
             raise
+
 
 
 
